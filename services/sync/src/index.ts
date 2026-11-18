@@ -4,9 +4,9 @@ import { loadConfig } from './config';
 import { createAppServer } from './server';
 
 const config = loadConfig();
-const app = createAppServer(config);
+const app = await createAppServer(config);
 const server = createServer((req, res) => void app.handler(req, res));
 server.listen(config.port, () => console.log(`@mail sync ouvindo em http://localhost:${config.port}`));
-function shutdown(): void { server.close(); app.close(); }
-process.once('SIGINT', shutdown);
-process.once('SIGTERM', shutdown);
+async function shutdown(): Promise<void> { server.close(); await app.close(); }
+process.once('SIGINT', () => void shutdown());
+process.once('SIGTERM', () => void shutdown());

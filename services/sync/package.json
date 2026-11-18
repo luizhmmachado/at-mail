@@ -6,5 +6,9 @@
   "scripts": {
     "dev": "node --experimental-sqlite --env-file-if-exists=.env --import tsx src/index.ts",
     "test": "node --experimental-sqlite --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1"
   }
 }
