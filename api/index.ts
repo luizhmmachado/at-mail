@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { loadConfig } from '../services/sync/src/config';
-import { createAppServer, type AppServer } from '../services/sync/src/server';
+import { loadConfig } from '../services/sync/src/config.js';
+import { createAppServer, type AppServer } from '../services/sync/src/server.js';
 
 let appPromise: Promise<AppServer> | undefined;
 
