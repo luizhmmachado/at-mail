@@ -4,7 +4,7 @@ import type { SyncConfig } from './config.js';
 import { encrypt, hashToken, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser } from './google.js';
-import { body, cors, json } from './http.js';
+import { body, cors, html, json } from './http.js';
 import { fetchChat, fetchGmail, markGmailMessagesRead, sendGmail } from './providers.js';
 import { readVault, writeVault } from './vault.js';
 
@@ -32,6 +32,38 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
       const headers = { ...originHeaders, 'cache-control': 'no-store' };
       if (req.method === 'OPTIONS') return json(res, 204, null, headers);
       try {
+        // Inicia um login e registra o `state` no servidor. O callback só aceita
+        // states criados aqui, então esta rota pública não grava nada arbitrário.
+        if (req.method === 'POST' && (url.pathname === '/auth/google/start' || url.pathname === '/api/auth/google/start')) {
+          if (!allowLoginStart(clientAddress(req))) return json(res, 429, { error: 'muitas tentativas de login; tente novamente em alguns minutos' }, headers);
+          const state = opaqueToken();
+          const now = Date.now();
+          await db.query('DELETE FROM atmail_oauth_pending WHERE created_at < $1', [now - PENDING_TTL_MS]);
+          await db.query('INSERT INTO atmail_oauth_pending (state, code, error, created_at) VALUES ($1, $2, $3, $4)', [state, '', '', now]);
+          return json(res, 200, { state }, headers);
+        }
+        // Callback do Google: o app não pode receber `atmail://` (o Google exige HTTPS
+        // para clients Web), então o backend guarda o `code` e o entrega no polling abaixo.
+        if (req.method === 'GET' && (url.pathname === '/auth/google/callback' || url.pathname === '/api/auth/google/callback')) {
+          const state = (url.searchParams.get('state') ?? '').slice(0, 128);
+          const authorizationCode = url.searchParams.get('code') ?? '';
+          const authorizationError = url.searchParams.get('error') ?? '';
+          if (state.length === 0) return html(res, 400, oauthPage('Não foi possível concluir', 'O Google não devolveu o identificador da sessão. Volte ao @mail e tente novamente.'), headers);
+          // Sem o `state` pré-registrado, a requisição é descartada: esta rota é pública.
+          const known = (await db.query<{ state: string }>('UPDATE atmail_oauth_pending SET code = $1, error = $2 WHERE state = $3 AND created_at > $4 RETURNING state', [authorizationCode, authorizationError, state, Date.now() - PENDING_TTL_MS])).rows;
+          if (known.length === 0) return html(res, 400, oauthPage('Sessão de login expirada', 'Este login não foi iniciado pelo @mail ou já expirou. Volte ao app e tente novamente.'), headers);
+          if (authorizationCode.length === 0) return html(res, 200, oauthPage('Login não concluído', 'O Google recusou a autorização. Volte ao @mail e tente novamente.'), headers);
+          return html(res, 200, oauthPage('Login concluído', 'Pode voltar ao @mail — esta janela já pode ser fechada.'), headers);
+        }
+        if (req.method === 'GET' && (url.pathname === '/auth/google/code' || url.pathname === '/api/auth/google/code')) {
+          const state = (url.searchParams.get('state') ?? '').slice(0, 128);
+          if (state.length === 0) return json(res, 400, { error: 'state obrigatório' }, headers);
+          const pending = (await db.query<{ code: string; error: string }>("SELECT code, error FROM atmail_oauth_pending WHERE state = $1 AND created_at > $2 AND (code <> '' OR error <> '')", [state, Date.now() - PENDING_TTL_MS])).rows[0];
+          if (!pending) return json(res, 200, { pending: true }, headers);
+          await db.query('DELETE FROM atmail_oauth_pending WHERE state = $1', [state]);
+          if (pending.error.length > 0) return json(res, 200, { error: pending.error }, headers);
+          return json(res, 200, { code: pending.code }, headers);
+        }
         if (req.method === 'POST' && (url.pathname === '/auth/google/exchange' || url.pathname === '/api/auth/google/exchange')) {
           const input = await body(req);
           const exchanged = await exchangeCode({ code: String(input.code ?? ''), codeVerifier: input.codeVerifier ? String(input.codeVerifier) : undefined, redirectUri: String(input.redirectUri ?? config.redirectUri), clientId: config.clientId, clientSecret: config.clientSecret });
@@ -112,3 +144,60 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
 }
 
 export function randomEncryptionKey(): string { return randomBytes(32).toString('base64'); }
+
+/** Quanto tempo um login iniciado continua válido para o callback do Google. */
+const PENDING_TTL_MS = 10 * 60 * 1000;
+const LOGIN_START_WINDOW_MS = 10 * 60 * 1000;
+const LOGIN_START_LIMIT = 30;
+const loginStartAttempts = new Map<string, number[]>();
+
+function clientAddress(req: IncomingMessage): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
+  return first?.trim() || req.socket?.remoteAddress || 'desconhecido';
+}
+
+/**
+ * Limite best-effort por instância para o início de logins. Não substitui um
+ * rate limiter distribuído, mas evita que a rota pública seja usada para encher
+ * a tabela de logins pendentes com um único endereço.
+ */
+function allowLoginStart(address: string, now = Date.now()): boolean {
+  const recent = (loginStartAttempts.get(address) ?? []).filter((at) => now - at < LOGIN_START_WINDOW_MS);
+  if (recent.length >= LOGIN_START_LIMIT) {
+    loginStartAttempts.set(address, recent);
+    return false;
+  }
+  recent.push(now);
+  loginStartAttempts.set(address, recent);
+  if (loginStartAttempts.size > 5000) loginStartAttempts.clear();
+  return true;
+}
+
+/** Página mostrada no navegador depois do consentimento do Google. */
+function oauthPage(title: string, message: string): string {
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@mail · ${title}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #FBFBFA; color: #1A1A19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; }
+      main { max-width: 380px; padding: 32px; text-align: center; }
+      span { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #61615C; }
+      h1 { margin: 12px 0 8px; font-size: 22px; font-weight: 600; }
+      p { margin: 0; font-size: 15px; line-height: 1.5; color: #61615C; }
+      @media (prefers-color-scheme: dark) { body { background: #111110; color: #F5F5F2; } p, span { color: #A6A6A0; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span>@mail</span>
+      <h1>${title}</h1>
+      <p>${message}</p>
+    </main>
+  </body>
+</html>`;
+}

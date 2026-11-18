@@ -5,6 +5,11 @@ export function json(res: ServerResponse, status: number, body: unknown, headers
   res.end(JSON.stringify(body));
 }
 
+export function html(res: ServerResponse, status: number, content: string, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', ...headers });
+  res.end(content);
+}
+
 export async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
