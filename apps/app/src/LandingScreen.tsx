@@ -15,7 +15,8 @@ export interface LandingScreenProps {
 export function LandingScreen({ onOpenApp }: LandingScreenProps) {
   const { width } = useWindowDimensions();
   const isWide = width >= 860;
-  const contentWidth = Math.min(width - 48, 1200);
+  const contentWidth = Math.min(width - (isWide ? 0 : 40), 1200);
+  const contentWidthStyle = [styles.contentWidth, !isWide && styles.contentWidthMobile];
   const desktopPreviewHeight = contentWidth * (750 / 1200);
   const mobilePreviewWidth = Math.min(contentWidth, 552);
   const mobilePreviewHeight = mobilePreviewWidth * (600 / 552);
@@ -35,7 +36,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
   return (
     <ScrollView ref={scrollView} style={styles.root} contentContainerStyle={styles.page}>
       <View style={styles.header}>
-        <View style={styles.contentWidth}>
+        <View style={contentWidthStyle}>
           <View style={styles.headerInner}>
             <View style={styles.brand}>
               <Image source={require('./figma-icon-light.png')} style={styles.brandIcon} />
@@ -60,17 +61,18 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View style={styles.hero}>
-        <View style={styles.contentWidth}>
-          <View style={styles.heroIntro}>
+        <View style={contentWidthStyle}>
+          <View style={[styles.heroIntro, !isWide && styles.heroIntroMobile]}>
             <Text style={styles.eyebrow}>UMA CAIXA DE ENTRADA. MAIS CLAREZA.</Text>
             <Text style={[styles.heroTitle, !isWide && styles.heroTitleMobile]}>Menos abas.{ '\n' }Mais conversa.</Text>
-            <Text style={styles.heroDescription}>
-              E-mails e chats juntos, com espaço para o que importa.{ '\n' }
-              Organize trabalho, estudos e vida pessoal no @mail.
+            <Text style={[styles.heroDescription, !isWide && styles.heroDescriptionMobile]}>
+              {isWide
+                ? <>E-mails e chats juntos, com espaço para o que importa.{ '\n' }Organize trabalho, estudos e vida pessoal no @mail.</>
+                : 'E-mails e chats juntos, com espaço para o que importa. Organize trabalho, estudos e vida pessoal no @mail.'}
             </Text>
-            <View style={styles.heroButtons}>
-              <PrimaryButton label="Começar agora  →" onPress={onOpenApp} />
-              <SecondaryButton label="Explorar os recursos" onPress={() => scrollToSection('resources')} />
+            <View style={[styles.heroButtons, !isWide && styles.heroButtonsMobile]}>
+              <PrimaryButton label="Começar agora  →" onPress={onOpenApp} mobile={!isWide} />
+              <SecondaryButton label="Explorar os recursos" onPress={() => scrollToSection('resources')} mobile={!isWide} />
             </View>
           </View>
           <View style={[styles.desktopPreview, { height: desktopPreviewHeight }]}>
@@ -85,7 +87,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View style={styles.benefitStrip}>
-        <View style={[styles.contentWidth, isWide && styles.benefitRow]}>
+        <View style={[...contentWidthStyle, isWide && styles.benefitRow]}>
           <Benefit icon="✉" title="E-mail e chat, lado a lado" description="Uma conversa contínua, sem trocar de aba." />
           <Benefit icon="⌕" title="Encontre. Continue. Resolva." description="Busca e respostas no mesmo espaço." />
           <Benefit icon="▤" title="Cada contexto no seu lugar" description="Trabalho, estudos e vida pessoal." />
@@ -93,50 +95,52 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View onLayout={rememberSection('resources')} style={styles.resources}>
-        <View style={styles.contentWidth}>
+        <View style={contentWidthStyle}>
           <View style={styles.sectionHeading}>
             <Text style={styles.eyebrow}>TUDO JUNTO. NADA MISTURADO.</Text>
             <Text style={[styles.sectionTitle, !isWide && styles.sectionTitleMobile]}>Uma inbox para os seus vários mundos.</Text>
           </View>
           <View style={[styles.resourceColumns, !isWide && styles.resourceColumnsMobile]}>
-            <View style={styles.inboxPanel}>
+            <View style={[styles.inboxPanel, !isWide && styles.inboxPanelMobile]}>
               <Text style={styles.panelTitle}>Todas as conversas</Text>
               <Text style={styles.panelDescription}>E-mails e chats organizados em uma única visão.</Text>
-              <View style={styles.contextFilters}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contextFilters}>
                 <Text style={styles.contextSelected}>Tudo</Text>
                 <Text style={styles.contextFilter}>Trabalho</Text>
                 <Text style={styles.contextFilter}>Estudos</Text>
                 <Text style={styles.contextFilter}>Pessoal</Text>
-              </View>
+              </ScrollView>
               <InboxPreviewRow icon="✉" name="Maya Chen" subject="Website handoff" context="Trabalho" />
               <InboxPreviewRow icon="▤" name="Study group" subject="Tomorrow’s session" context="Estudos" />
               <InboxPreviewRow icon="✉" name="Oliver Grant" subject="Coffee next week?" context="Pessoal" />
             </View>
             <View style={styles.contextPanel}>
               <Image source={require('./figma-icon-dark.png')} style={styles.contextIcon} />
-              <Text style={styles.contextTitle}>Seu dia tem contextos.{ '\n' }Sua inbox também.</Text>
-              <Text style={styles.contextDescription}>
+              <Text style={[styles.contextTitle, !isWide && styles.contextTitleMobile]}>Seu dia tem contextos.{ '\n' }Sua inbox também.</Text>
+              <Text style={[styles.contextDescription, !isWide && styles.contextDescriptionMobile]}>
                 Escolha o que merece sua atenção agora.{ '\n' }
                 O resto continua no lugar certo.
               </Text>
-              <Text style={styles.contextLabels}>TRABALHO   /   ESTUDOS   /   PESSOAL</Text>
+              <Text style={[styles.contextLabels, !isWide && styles.contextLabelsMobile]}>TRABALHO   /   ESTUDOS   /   PESSOAL</Text>
             </View>
           </View>
-          <View style={styles.downloads}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.downloadScroll} contentContainerStyle={styles.downloads}>
             <Text style={styles.downloadsLabel}>BAIXAR O @MAIL</Text>
             <DownloadLink label="Android" />
             <DownloadLink label="Windows" />
             <DownloadLink label="Linux" />
-          </View>
+          </ScrollView>
         </View>
       </View>
 
       <View onLayout={rememberSection('flow')} style={styles.flow}>
-        <View style={[styles.contentWidth, isWide && styles.flowRow]}>
+        <View style={[...contentWidthStyle, isWide && styles.flowRow]}>
           <View style={styles.flowIntro}>
             <Text style={styles.eyebrow}>MENOS ATRITO, MAIS FLUXO</Text>
             <Text style={[styles.flowTitle, !isWide && styles.flowTitleMobile]}>Da primeira leitura{ '\n' }à última resposta.</Text>
-            <Text style={styles.flowDescription}>Tudo o que você precisa para seguir a conversa,{ '\n' }sem perder o fio da meada.</Text>
+            <Text style={[styles.flowDescription, !isWide && styles.flowDescriptionMobile]}>
+              {isWide ? <>Tudo o que você precisa para seguir a conversa,{ '\n' }sem perder o fio da meada.</> : 'Tudo o que você precisa para seguir a conversa, sem perder o fio da meada.'}
+            </Text>
             <Pressable accessibilityRole="button" style={styles.inlineLink} onPress={onOpenApp}>
               <Text style={styles.inlineLinkText}>Conheça o seu novo ritmo  →</Text>
             </Pressable>
@@ -150,7 +154,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View style={styles.mobileSection}>
-        <View style={[styles.contentWidth, isWide && styles.mobileRow]}>
+        <View style={[...contentWidthStyle, isWide && styles.mobileRow]}>
           <View style={[styles.mobilePreview, { height: mobilePreviewHeight }]}>
             <Image
               accessibilityLabel="Prévia do @mail em um telefone"
@@ -162,10 +166,10 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
           <View style={styles.mobileCopy}>
             <Text style={styles.eyebrow}>A MESMA CLAREZA, EM OUTRA TELA</Text>
             <Text style={[styles.mobileTitle, !isWide && styles.mobileTitleNarrow]}>Suas conversas{ '\n' }vão com você.</Text>
-            <Text style={styles.mobileDescription}>
-              A visão unificada do @mail também cabe na sua mão.{ '\n' }
-              Encontre a conversa e mantenha o contexto,{ '\n' }
-              mesmo longe da mesa.
+            <Text style={[styles.mobileDescription, !isWide && styles.mobileDescriptionNarrow]}>
+              {isWide
+                ? <>A visão unificada do @mail também cabe na sua mão.{ '\n' }Encontre a conversa e mantenha o contexto,{ '\n' }mesmo longe da mesa.</>
+                : 'A visão unificada do @mail também cabe na sua mão. Encontre a conversa e mantenha o contexto, mesmo longe da mesa.'}
             </Text>
             <View style={styles.mobileBenefits}>
               <NumberedLine number="01" label="E-mails e chats na mesma lista" />
@@ -177,7 +181,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View onLayout={rememberSection('faq')} style={styles.faq}>
-        <View style={[styles.contentWidth, isWide && styles.faqRow]}>
+        <View style={[...contentWidthStyle, isWide && styles.faqRow]}>
           <View style={styles.faqIntro}>
             <Text style={styles.eyebrow}>BOM SABER</Text>
             <Text style={[styles.faqTitle, !isWide && styles.faqTitleMobile]}>Uma ideia simples.{ '\n' }Sem pontas soltas.</Text>
@@ -202,7 +206,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       </View>
 
       <View style={styles.footer}>
-        <View style={[styles.contentWidth, styles.footerInner]}>
+        <View style={[...contentWidthStyle, styles.footerInner]}>
           <View style={styles.footerBrand}>
             <View style={styles.brand}>
               <Image source={require('./figma-icon-light.png')} style={styles.footerIcon} />
@@ -247,17 +251,17 @@ function NavLink({ label, onPress }: { label: string; onPress: () => void }) {
   );
 }
 
-function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryButton({ label, onPress, mobile = false }: { label: string; onPress: () => void; mobile?: boolean }) {
   return (
-    <Pressable accessibilityRole="button" style={styles.primaryButton} onPress={onPress}>
+    <Pressable accessibilityRole="button" style={[styles.primaryButton, mobile && styles.primaryButtonMobile]} onPress={onPress}>
       <Text style={styles.primaryButtonText}>{label}</Text>
     </Pressable>
   );
 }
 
-function SecondaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+function SecondaryButton({ label, onPress, mobile = false }: { label: string; onPress: () => void; mobile?: boolean }) {
   return (
-    <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={onPress}>
+    <Pressable accessibilityRole="button" style={[styles.secondaryButton, mobile && styles.secondaryButtonMobile]} onPress={onPress}>
       <Text style={styles.secondaryButtonText}>{label}</Text>
     </Pressable>
   );
@@ -332,7 +336,9 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FFFFFF' },
   page: { alignItems: 'center' },
-  contentWidth: { width: '100%', maxWidth: 1200, alignSelf: 'center', paddingHorizontal: 0 },
+  contentWidth: { width: '100%', maxWidth: 1200, alignSelf: 'center' },
+  contentWidthMobile: { paddingHorizontal: 20 },
+  contentWidthMobile: { paddingHorizontal: 20 },
   header: { width: '100%', minHeight: 88, backgroundColor: '#FFFFFF' },
   headerInner: { minHeight: 88, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   brand: { flexDirection: 'row', alignItems: 'center' },
@@ -345,14 +351,19 @@ const styles = StyleSheet.create({
   headerButtonText: { color: '#FFFFFF', fontFamily: FONT_MEDIUM, fontSize: 15 },
   hero: { width: '100%', backgroundColor: '#FAFAFA', paddingTop: 44, paddingBottom: 64 },
   heroIntro: { alignItems: 'center', paddingHorizontal: 16 },
+  heroIntroMobile: { paddingHorizontal: 0 },
   eyebrow: { color: '#1D4ED8', fontFamily: FONT_SEMIBOLD, fontSize: 11 },
   heroTitle: { marginTop: 28, color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 88, lineHeight: 92, textAlign: 'center' },
   heroTitleMobile: { marginTop: 22, fontSize: 40, lineHeight: 45 },
   heroDescription: { marginTop: 26, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 19, lineHeight: 29, textAlign: 'center' },
+  heroDescriptionMobile: { marginTop: 20, fontSize: 16, lineHeight: 24 },
   heroButtons: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16, marginTop: 28 },
+  heroButtonsMobile: { width: '100%', flexDirection: 'column', gap: 10, marginTop: 24 },
   primaryButton: { minWidth: 212, minHeight: 50, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, borderRadius: 7, backgroundColor: '#18181B' },
+  primaryButtonMobile: { width: '100%', minWidth: 0 },
   primaryButtonText: { color: '#FFFFFF', fontFamily: FONT_MEDIUM, fontSize: 15 },
   secondaryButton: { minWidth: 206, minHeight: 50, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, borderWidth: 1, borderColor: '#E4E4E7', borderRadius: 7, backgroundColor: '#FFFFFF' },
+  secondaryButtonMobile: { width: '100%', minWidth: 0 },
   secondaryButtonText: { color: '#18181B', fontFamily: FONT_MEDIUM, fontSize: 15 },
   desktopPreview: { width: '100%', marginTop: 46 },
   fillImage: { width: '100%', height: '100%' },
@@ -370,9 +381,10 @@ const styles = StyleSheet.create({
   resourceColumns: { flexDirection: 'row', alignItems: 'stretch', gap: 24, marginTop: 48 },
   resourceColumnsMobile: { flexDirection: 'column' },
   inboxPanel: { flex: 1.45, minHeight: 340, padding: 28, borderWidth: 1, borderColor: '#E4E4E7', borderRadius: 16, backgroundColor: '#FAFAFA' },
+  inboxPanelMobile: { minHeight: 0, padding: 20 },
   panelTitle: { color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 22 },
   panelDescription: { marginTop: 8, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 14 },
-  contextFilters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 26, marginBottom: 14 },
+  contextFilters: { flexDirection: 'row', gap: 8, marginTop: 26, marginBottom: 14 },
   contextSelected: { overflow: 'hidden', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 6, backgroundColor: '#18181B', color: '#FFFFFF', fontFamily: FONT_MEDIUM, fontSize: 12 },
   contextFilter: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 6, backgroundColor: '#F0F0F2', color: '#65656F', fontFamily: FONT_MEDIUM, fontSize: 12 },
   inboxRow: { minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6, paddingHorizontal: 14, borderRadius: 6, backgroundColor: '#FFFFFF' },
@@ -381,12 +393,17 @@ const styles = StyleSheet.create({
   inboxRowName: { color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 12 },
   inboxRowSubject: { color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 11 },
   inboxRowContext: { color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 11 },
-  contextPanel: { flex: 0.8, minHeight: 340, alignItems: 'flex-start', justifyContent: 'center', padding: 30, borderRadius: 16, backgroundColor: '#18181B' },
+  contextPanel: { flex: 0.8, minHeight: 340, alignItems: 'flex-start', justifyContent: 'center', padding: 30, borderRadius: 16, backgroundColor: '#000000' },
+  contextPanelMobile: { minHeight: 280, padding: 20 },
   contextIcon: { width: 64, height: 64, marginBottom: 25 },
   contextTitle: { color: '#FFFFFF', fontFamily: FONT_SEMIBOLD, fontSize: 30, lineHeight: 40 },
+  contextTitleMobile: { fontSize: 22, lineHeight: 30 },
   contextDescription: { marginTop: 16, color: '#A1A1AA', fontFamily: FONT_REGULAR, fontSize: 15, lineHeight: 24 },
+  contextDescriptionMobile: { fontSize: 14, lineHeight: 22 },
   contextLabels: { marginTop: 44, color: '#A1A1AA', fontFamily: FONT_MEDIUM, fontSize: 9 },
-  downloads: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 24, marginTop: 28, paddingTop: 22, borderTopWidth: 1, borderTopColor: '#E4E4E7' },
+  contextLabelsMobile: { marginTop: 30, fontSize: 8 },
+  downloadScroll: { width: '100%', marginTop: 28, borderTopWidth: 1, borderTopColor: '#E4E4E7' },
+  downloads: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 22 },
   downloadsLabel: { color: '#65656F', fontFamily: FONT_SEMIBOLD, fontSize: 10 },
   downloadLink: { paddingVertical: 8 },
   downloadLinkText: { color: '#18181B', fontFamily: FONT_MEDIUM, fontSize: 13 },
@@ -396,6 +413,7 @@ const styles = StyleSheet.create({
   flowTitle: { marginTop: 22, color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 47, lineHeight: 53 },
   flowTitleMobile: { fontSize: 36, lineHeight: 42 },
   flowDescription: { marginTop: 26, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 16, lineHeight: 25 },
+  flowDescriptionMobile: { fontSize: 15, lineHeight: 23 },
   inlineLink: { alignSelf: 'flex-start', marginTop: 38, paddingVertical: 10 },
   inlineLinkText: { color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 14 },
   flowSteps: { flex: 1, marginTop: 2 },
@@ -411,6 +429,7 @@ const styles = StyleSheet.create({
   mobileTitle: { marginTop: 26, color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 48, lineHeight: 54 },
   mobileTitleNarrow: { fontSize: 38, lineHeight: 44 },
   mobileDescription: { marginTop: 24, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 17, lineHeight: 27 },
+  mobileDescriptionNarrow: { fontSize: 15, lineHeight: 23 },
   mobileBenefits: { gap: 22, marginTop: 32 },
   numberedLine: { flexDirection: 'row', alignItems: 'center', gap: 18 },
   numberedLineNumber: { width: 28, color: '#1D4ED8', fontFamily: FONT_MEDIUM, fontSize: 12 },
