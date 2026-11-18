@@ -496,17 +496,93 @@ function MessageBody({
 }
 
 function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string): string {
+  const themedBodyHtml = mode === 'dark' ? adaptEmailColors(bodyHtml, surface, text) : bodyHtml;
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
   const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
-  if (headClose.test(bodyHtml)) return bodyHtml.replace(headClose, (head) => `${headContent}${head}`);
-  if (headOpen.test(bodyHtml)) return bodyHtml.replace(headOpen, (head) => `${head}${headContent}`);
+  if (headClose.test(themedBodyHtml)) return themedBodyHtml.replace(headClose, (head) => `${headContent}${head}`);
+  if (headOpen.test(themedBodyHtml)) return themedBodyHtml.replace(headOpen, (head) => `${head}${headContent}`);
   const htmlOpen = /<html\b[^>]*>/i;
-  if (htmlOpen.test(bodyHtml)) return bodyHtml.replace(htmlOpen, (html) => `${html}<head>${headContent}</head>`);
-  return `<!doctype html><html><head>${headContent}</head><body>${bodyHtml}</body></html>`;
+  if (htmlOpen.test(themedBodyHtml)) return themedBodyHtml.replace(htmlOpen, (html) => `${html}<head>${headContent}</head>`);
+  return `<!doctype html><html><head>${headContent}</head><body>${themedBodyHtml}</body></html>`;
+}
+
+function adaptEmailColors(bodyHtml: string, surface: string, text: string): string {
+  const mapColor = (property: string, value: string): string | undefined => {
+    const color = parseEmailColor(value);
+    if (color === undefined || Math.max(...color) - Math.min(...color) > 30) return undefined;
+    const brightness = (color[0] + color[1] + color[2]) / 3;
+    if ((property === 'background' || property === 'background-color') && brightness >= 190) return surface;
+    if (property === 'color' && brightness <= 140) return text;
+    return undefined;
+  };
+  const css = /(?<![-\w])(background(?:-color)?|color)\s*:\s*(#[\da-f]{3,8}\b|rgba?\([^)]*\)|[a-z]+)(\s*!important)?/gi;
+  const attributes = /\b(bgcolor|color)\s*=\s*(["']?)(#[\da-f]{3,8}\b|rgba?\([^)]*\)|[a-z]+)\2/gi;
+
+  return bodyHtml
+    .replace(css, (declaration, property: string, value: string, important: string | undefined) => {
+      const replacement = mapColor(property.toLowerCase(), value);
+      return replacement === undefined ? declaration : `${property}:${replacement}${important ?? ''}`;
+    })
+    .replace(attributes, (attribute, name: string, quote: string, value: string) => {
+      const property = name.toLowerCase() === 'bgcolor' ? 'background-color' : 'color';
+      const replacement = mapColor(property, value);
+      return replacement === undefined ? attribute : `${name}=${quote}${replacement}${quote}`;
+    });
+}
+
+const EMAIL_NEUTRAL_COLORS: Record<string, [number, number, number]> = {
+  black: [0, 0, 0],
+  darkgray: [169, 169, 169],
+  darkgrey: [169, 169, 169],
+  dimgray: [105, 105, 105],
+  dimgrey: [105, 105, 105],
+  gainsboro: [220, 220, 220],
+  gray: [128, 128, 128],
+  grey: [128, 128, 128],
+  lightgray: [211, 211, 211],
+  lightgrey: [211, 211, 211],
+  silver: [192, 192, 192],
+  white: [255, 255, 255],
+  whitesmoke: [245, 245, 245]
+};
+
+function parseEmailColor(value: string): [number, number, number] | undefined {
+  const normalized = value.trim().toLowerCase();
+  const named = EMAIL_NEUTRAL_COLORS[normalized];
+  if (named !== undefined) return named;
+
+  const hex = normalized.match(/^#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i)?.[1];
+  if (hex !== undefined) {
+    if (hex.length === 4 && Number.parseInt(hex[3] ?? 'f', 16) < 8) return undefined;
+    if (hex.length === 8 && Number.parseInt(hex.slice(6), 16) < 128) return undefined;
+    if (hex.length <= 4) {
+      return [
+        Number.parseInt((hex[0] ?? '0').repeat(2), 16),
+        Number.parseInt((hex[1] ?? '0').repeat(2), 16),
+        Number.parseInt((hex[2] ?? '0').repeat(2), 16)
+      ];
+    }
+    return [
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16)
+    ];
+  }
+
+  const rgb = normalized.match(/^rgba?\(\s*([\d.]+%?)\s*,\s*([\d.]+%?)\s*,\s*([\d.]+%?)(?:\s*,\s*([\d.]+%?))?\s*\)$/);
+  if (rgb === null) return undefined;
+  if (rgb[4] !== undefined && (rgb[4].endsWith('%') ? Number.parseFloat(rgb[4]) < 50 : Number.parseFloat(rgb[4]) < 0.5)) {
+    return undefined;
+  }
+  const channelValue = (channel: string): number => {
+    const amount = Number.parseFloat(channel);
+    return Math.max(0, Math.min(255, Math.round(channel.endsWith('%') ? amount * 2.55 : amount)));
+  };
+  return [channelValue(rgb[1] ?? '0'), channelValue(rgb[2] ?? '0'), channelValue(rgb[3] ?? '0')];
 }
 
 function AttachmentCard({ attachment }: { attachment: Attachment }): ReactElement {
