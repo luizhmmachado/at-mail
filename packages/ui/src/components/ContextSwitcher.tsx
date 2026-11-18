@@ -1,5 +1,5 @@
-import type { ReactElement } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useState, type ReactElement } from 'react';
+import { Modal, Pressable, Text, View } from 'react-native';
 import { contextAccent } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
@@ -13,10 +13,11 @@ import { Glyph } from './Glyph';
  * O rail não mostra contadores: no arquivo o estado de não lido fica nas linhas
  * e no cabeçalho da seção, não aqui.
  */
-export function WorkspaceRail(): ReactElement {
+export function WorkspaceRail({ onAddAccount }: { onAddAccount?: () => void } = {}): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <View
@@ -72,9 +73,61 @@ export function WorkspaceRail(): ReactElement {
 
       <View style={{ width: 1, height: 18, backgroundColor: theme.colors.borderSubtle, marginVertical: theme.space[2] }} />
 
-      <View accessibilityLabel={`${snapshot.accounts.length} contas conectadas`} style={{ padding: theme.space[1] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Abrir perfil e configurações"
+        onPress={() => setSettingsOpen(true)}
+        style={{ padding: theme.space[1] }}
+      >
         <Glyph name="user" size={18} color={theme.colors.textSecondary} />
-      </View>
+      </Pressable>
+
+      <Modal visible={settingsOpen} transparent animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
+        <Pressable
+          accessibilityLabel="Fechar configurações"
+          onPress={() => setSettingsOpen(false)}
+          style={{ flex: 1, justifyContent: 'flex-end', alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.18)' }}
+        >
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
+            style={{
+              width: 340,
+              margin: theme.space[5],
+              padding: theme.space[5],
+              borderRadius: theme.radius.xxl,
+              backgroundColor: theme.colors.surface,
+              shadowColor: theme.colors.shadow,
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 }
+            }}
+          >
+            <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Configurações</Text>
+            <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
+              {snapshot.accounts.length} {snapshot.accounts.length === 1 ? 'conta conectada' : 'contas conectadas'}
+            </Text>
+            <View style={{ gap: theme.space[2], marginTop: theme.space[4] }}>
+              {snapshot.accounts.map((account) => (
+                <View key={account.id} style={{ padding: theme.space[3], borderRadius: theme.radius.lg, backgroundColor: theme.colors.surfaceSunken }}>
+                  <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>{account.displayName}</Text>
+                  <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>{account.email} · {account.channel === 'chat' ? 'Chat' : 'E-mail'}</Text>
+                </View>
+              ))}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Adicionar conta Google"
+              onPress={() => {
+                setSettingsOpen(false);
+                onAddAccount?.();
+              }}
+              style={{ marginTop: theme.space[4], padding: theme.space[3], borderRadius: theme.radius.lg, backgroundColor: theme.colors.accent, alignItems: 'center' }}
+            >
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>Adicionar conta Google</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

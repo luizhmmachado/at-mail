@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from 'react-native';
-import type { ThreadId } from '@mail/core';
+import type { ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -13,19 +13,25 @@ import { typeStyle } from '../theme/typography';
 
 type MobilePane = 'list' | 'reader';
 
-export function AppShell(): ReactElement {
+export interface AppShellProps {
+  onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
+  onAddAccount?: () => void;
+}
+
+export function AppShell({ onSend, onAddAccount }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody />
+      <ShellBody onSend={onSend} onAddAccount={onAddAccount} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody(): ReactElement {
+function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
+  const actions = useMailActions();
   const onSelectThread = useThreadSelectionHandler();
   const { width } = useWindowDimensions();
   const [mobilePane, setMobilePane] = useState<MobilePane>('list');
@@ -44,19 +50,25 @@ function ShellBody(): ReactElement {
     if (isMobile) setMobilePane('reader');
   };
 
+  const openComposer = (): void => {
+    const threadId = snapshot.view.selectedThreadId ?? feed.threads[0]?.id;
+    if (threadId !== undefined && snapshot.view.selectedThreadId === undefined) onSelectThread(threadId);
+    actions.toggleCompose(true);
+  };
+
   if (isMobile) {
     const showReader = mobilePane === 'reader' && selectedThread !== undefined;
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
         <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
           {showReader ? (
-            <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} />
+              <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} onSend={onSend} />
           ) : (
             <>
               <View style={{ flex: 1 }}>
-                <UnifiedThreadList feed={feed} onSelectThread={handleSelect} fullScreen />
+                <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openComposer} fullScreen />
               </View>
-              <MobileNav active={snapshot.view.channel} />
+              <MobileNav active={snapshot.view.channel} onCompose={openComposer} />
             </>
           )}
         </View>
@@ -68,7 +80,7 @@ function ShellBody(): ReactElement {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: theme.colors.canvas }}>
-      <WorkspaceRail />
+      <WorkspaceRail onAddAccount={onAddAccount} />
 
       <View
         style={{
@@ -78,11 +90,11 @@ function ShellBody(): ReactElement {
           backgroundColor: theme.colors.surface
         }}
       >
-        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} />
+        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openComposer} />
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>
-        <ReaderPane thread={selectedThread} />
+        <ReaderPane thread={selectedThread} onSend={onSend} />
       </View>
 
       <SyncStatus />
@@ -126,10 +138,9 @@ function SyncStatus(): ReactElement | null {
 }
 
 /** Navegação inferior de 84 px do frame mobile. */
-function MobileNav({ active }: { active: 'all' | 'email' | 'chat' }): ReactElement {
+function MobileNav({ active, onCompose }: { active: 'all' | 'email' | 'chat'; onCompose: () => void }): ReactElement {
   const theme = useTheme();
   const actions = useMailActions();
-  const snapshot = useMailSnapshot();
 
   return (
     <View
@@ -160,13 +171,7 @@ function MobileNav({ active }: { active: 'all' | 'email' | 'chat' }): ReactEleme
         name="compose"
         label="Escrever"
         active={false}
-        onPress={() => {
-          if (snapshot.view.selectedThreadId !== undefined) {
-            actions.toggleCompose(true);
-          } else {
-            actions.toggleCommandPalette(true);
-          }
-        }}
+        onPress={onCompose}
       />
     </View>
   );

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
   isChatMessage,
@@ -24,6 +24,7 @@ import { Glyph, type GlyphName } from './Glyph';
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
+  onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
 }
 
 /**
@@ -33,7 +34,7 @@ export interface ReaderPaneProps {
  * etiqueta de 26 px, mensagens anteriores em cartão de 74 px e a última mensagem
  * aberta, com o compositor de 132 px ao pé da coluna.
  */
-export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
+export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactElement {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
@@ -42,6 +43,7 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
   const { feed } = useFeed();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [sending, setSending] = useState(false);
   const mobile = onBack !== undefined;
   const gutter = mobile ? theme.layout.mobilePaddingX : theme.layout.readerGutter;
 
@@ -91,6 +93,21 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
   const replyTarget = messages.length > 0 ? senderName(messages[messages.length - 1]!) : threadParticipantsLabel(thread, 1);
   const platform = currentPlatform();
   const canModifyEmail = thread.channel !== 'chat';
+  const send = async (): Promise<void> => {
+    if (!onSend || draft.trim().length === 0 || sending) return;
+    setSending(true);
+    setNotice(undefined);
+    try {
+      await onSend(thread, draft.trim());
+      setDraft('');
+      actions.toggleCompose(false);
+      setNotice('Mensagem enviada.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Não foi possível enviar a mensagem.');
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
@@ -281,7 +298,7 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
               accessibilityRole="button"
               accessibilityLabel="Enviar resposta"
               accessibilityState={{ disabled: draft.trim().length === 0 }}
-              onPress={() => setNotice('O envio depende do serviço de sincronização, que ainda não está conectado.')}
+              onPress={() => void send()}
               style={{
                 width: theme.layout.sendButtonWidth,
                 height: theme.layout.sendButtonHeight,
@@ -292,10 +309,10 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
                 gap: 6,
                 borderRadius: theme.radius.md,
                 backgroundColor: draft.trim().length === 0 ? theme.colors.borderStrong : theme.colors.textPrimary,
-                opacity: draft.trim().length === 0 ? 0.6 : 1
+                opacity: draft.trim().length === 0 || sending ? 0.6 : 1
               }}
             >
-              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>Enviar</Text>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>{sending ? 'Enviando…' : 'Enviar'}</Text>
               <Glyph name="arrow" size={14} color={theme.colors.surface} />
             </Pressable>
           </View>
@@ -382,9 +399,7 @@ function EarlierMessage({ message }: { message: MailMessage }): ReactElement {
           {formatRelativeTime(message.receivedAt)}
         </Text>
       </View>
-      <Text style={{ ...typeStyle(theme, 'earlierBody'), color: theme.colors.textSecondary }}>
-        {message.bodyText}
-      </Text>
+      <MessageBody message={message} role="earlierBody" color={theme.colors.textSecondary} />
     </View>
   );
 }
@@ -416,15 +431,7 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
         <Glyph name="chevron-down" size={12} color={theme.colors.textSecondary} />
       </View>
 
-      <Text
-        style={{
-          ...typeStyle(theme, 'readerBody'),
-          marginTop: theme.space[2] + 2,
-          color: theme.colors.textPrimary
-        }}
-      >
-        {message.bodyText}
-      </Text>
+      <MessageBody message={message} role="readerBody" color={theme.colors.textPrimary} />
 
       {isEmailMessage(message) && message.attachments.length > 0 && (
         <View style={{ gap: theme.space[2], marginTop: theme.space[4] }}>
@@ -434,6 +441,41 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
         </View>
       )}
     </View>
+  );
+}
+
+const URL_PATTERN = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
+
+function MessageBody({
+  message,
+  role,
+  color
+}: {
+  message: MailMessage;
+  role: 'earlierBody' | 'readerBody';
+  color: string;
+}): ReactElement {
+  const theme = useTheme();
+  const parts = message.bodyText.split(URL_PATTERN);
+  return (
+    <Text style={{ ...typeStyle(theme, role), color, ...(role === 'readerBody' ? { marginTop: theme.space[2] + 2 } : {}) }}>
+      {parts.map((part, index) => {
+        const isUrl = /^(?:https?:\/\/|www\.)/i.test(part);
+        if (!isUrl) return part;
+        const cleanUrl = part.replace(/[),.;!?]+$/, '');
+        return (
+          <Text
+            key={`${cleanUrl}-${index}`}
+            accessibilityRole="link"
+            accessibilityLabel={`Abrir ${cleanUrl}`}
+            onPress={() => void Linking.openURL(cleanUrl.startsWith('www.') ? `https://${cleanUrl}` : cleanUrl)}
+            style={{ color: theme.colors.accent, textDecorationLine: 'underline' }}
+          >
+            {part}
+          </Text>
+        );
+      })}
+    </Text>
   );
 }
 

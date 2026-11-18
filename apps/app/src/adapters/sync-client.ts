@@ -1,5 +1,5 @@
 import { brand } from '@mail/core';
-import type { ChatMessage, EmailMessage, MailMessage, MailboxAdapter, SyncPage } from '@mail/core';
+import type { ChatMessage, EmailMessage, MailMessage, MailboxAdapter, SendRequest, SyncPage } from '@mail/core';
 import { apiFetch } from '../auth';
 
 export interface SyncEnvelopeDto {
@@ -37,6 +37,33 @@ export interface SyncRequest {
   accountId: string;
   cursor?: string;
   limit?: number;
+}
+
+export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
+  const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
+  if (emailMessages.length === 0) return;
+  const byAccount = new Map<string, string[]>();
+  for (const message of emailMessages) {
+    const ids = byAccount.get(message.accountId) ?? [];
+    ids.push(message.id);
+    byAccount.set(message.accountId, ids);
+  }
+  await Promise.all(Array.from(byAccount, ([accountId, messageIds]) => apiFetch('/messages/read', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, messageIds, isRead })
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`marcar leitura falhou (${response.status})`);
+  })));
+}
+
+export async function sendEmail(accountId: string, request: SendRequest): Promise<void> {
+  const response = await apiFetch('/messages/send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, ...request })
+  });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { Pressable, SectionList, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, SectionList, Text, TextInput, View } from 'react-native';
 import {
   contextAccent,
   formatShortcut,
@@ -20,6 +20,7 @@ import { ThreadRow } from './ThreadRow';
 export interface UnifiedThreadListProps {
   feed: FeedResult;
   onSelectThread: (threadId: ThreadId) => void;
+  onCompose?: () => void;
   /** Em telas pequenas a lista ocupa a tela inteira. */
   fullScreen?: boolean;
 }
@@ -30,7 +31,7 @@ export interface UnifiedThreadListProps {
  * A ordem vertical é fixa: título (20/24) + chevron + escrever, busca de 34 px,
  * segmentado de 32 px e, dentro da lista, cabeçalhos de data com contagem.
  */
-export function UnifiedThreadList({ feed, onSelectThread, fullScreen = false }: UnifiedThreadListProps): ReactElement {
+export function UnifiedThreadList({ feed, onSelectThread, onCompose, fullScreen = false }: UnifiedThreadListProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
@@ -97,7 +98,10 @@ export function UnifiedThreadList({ feed, onSelectThread, fullScreen = false }: 
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Escrever resposta na conversa aberta"
-              onPress={() => actions.toggleCompose(true)}
+              onPress={() => {
+                if (onCompose) onCompose();
+                else actions.toggleCompose(true);
+              }}
               style={{ width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}
             >
               <Glyph name="compose" size={20} color={theme.colors.textPrimary} />
@@ -194,7 +198,7 @@ export function UnifiedThreadList({ feed, onSelectThread, fullScreen = false }: 
             onPress={() => onSelectThread(item.id)}
           />
         )}
-        ListEmptyComponent={<EmptyState query={snapshot.view.query} />}
+        ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={snapshot.sync.status === 'syncing'} />}
         contentContainerStyle={{ paddingBottom: fullScreen ? theme.space[10] : theme.space[6] }}
       />
 
@@ -292,15 +296,18 @@ function ContextOption({
   );
 }
 
-function EmptyState({ query }: { query: string }): ReactElement {
+function EmptyState({ query, loading }: { query: string; loading: boolean }): ReactElement {
   const theme = useTheme();
   return (
     <View style={{ padding: theme.space[6], gap: theme.space[2] }}>
+      {loading && <ActivityIndicator accessibilityLabel="Carregando mensagens" color={theme.colors.accent} />}
       <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
-        {query.length > 0 ? 'Nada encontrado' : 'Caixa livre'}
+        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado' : 'Caixa livre'}
       </Text>
       <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
-        {query.length > 0
+        {loading
+          ? 'Buscando suas mensagens e conversas.'
+          : query.length > 0
           ? `Nenhuma conversa corresponde a “${query}”. Tente from:, context: ou in:chat.`
           : 'Nenhuma conversa neste contexto. Ao chegar algo novo, aparece aqui.'}
       </Text>

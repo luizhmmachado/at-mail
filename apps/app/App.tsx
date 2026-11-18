@@ -11,13 +11,33 @@ import { AppShell, MailStoreProvider } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
-import { GOOGLE_CLIENT_ID } from './src/config';
-import { fetchAccounts, finishGoogleLogin, sessionToken } from './src/auth';
+import { GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
+import { beginGoogleLogin, fetchAccounts, finishGoogleLogin, sessionToken } from './src/auth';
 import { SignInScreen } from './src/SignInScreen';
+import { sendEmail } from './src/adapters/sync-client';
+import type { UnifiedThread } from '@mail/core';
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(DEMO_MODE);
   const [authError, setAuthError] = useState<string>();
+
+  async function handleSend(thread: UnifiedThread, body: string): Promise<void> {
+    if (thread.channel === 'chat') throw new Error('Envio pelo Google Chat ainda não está disponível.');
+    const messages = store.getThreadMessages(thread.id);
+    const last = messages[messages.length - 1];
+    const recipient = last?.participants.find((participant) => participant.email.length > 0)?.email;
+    if (!last || !recipient) throw new Error('Não encontrei um destinatário para responder.');
+    await sendEmail(last.accountId, {
+      to: [recipient],
+      subject: thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`,
+      body,
+      inReplyTo: last.channel === 'email' ? last.rfcMessageId : undefined
+    });
+  }
+
+  async function beginAddAccount(): Promise<void> {
+    await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add');
+  }
 
   async function activateSession(): Promise<void> {
     const accounts = await fetchAccounts();
@@ -64,7 +84,7 @@ export default function App() {
   return (
     <View style={styles.root}>
       <MailStoreProvider store={store}>
-        <AppShell />
+        <AppShell onSend={handleSend} onAddAccount={() => void beginAddAccount()} />
       </MailStoreProvider>
       <StatusBar style="auto" />
     </View>

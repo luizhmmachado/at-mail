@@ -1,16 +1,18 @@
 import { Platform } from 'react-native';
 
+const productionSyncApiUrl = 'https://at-mail-sync-legacy.vercel.app';
 const fallbackHost = Platform.select({
-  android: 'http://10.0.2.2:8790',
-  default: 'http://localhost:8790'
+  android: productionSyncApiUrl,
+  default: productionSyncApiUrl
 });
 
 /** Backend de sincronização (guarda refresh tokens; o cliente nunca os vê). */
 export const SYNC_API_URL = process.env.EXPO_PUBLIC_SYNC_API_URL ?? fallbackHost;
 
-export const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
+export const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '77051752731-cp96clb7i04rk96asvdl0et37n00hnm3.apps.googleusercontent.com';
 
-export const DEMO_MODE = process.env.EXPO_PUBLIC_SYNC_API_URL === undefined;
+/** Demo só é ativado explicitamente; builds de produção nunca caem silenciosamente nos mocks. */
+export const DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 
 /**
  * Escopos OAuth2 solicitados no consentimento.
@@ -24,6 +26,7 @@ export const GOOGLE_SCOPES = [
   'email',
   'profile',
   'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/chat.messages.readonly',
   'https://www.googleapis.com/auth/chat.spaces.readonly'
 ] as const;

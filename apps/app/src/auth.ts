@@ -6,6 +6,7 @@ import type { Account } from '@mail/core';
 const TOKEN_KEY = 'atmail.session.token';
 const STATE_KEY = 'atmail.oauth.state';
 const VERIFIER_KEY = 'atmail.oauth.verifier';
+const MODE_KEY = 'atmail.oauth.mode';
 
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === 'web') return globalThis.localStorage?.getItem(key) ?? null;
@@ -35,11 +36,12 @@ async function codeChallenge(verifier: string): Promise<string> {
   return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export async function beginGoogleLogin(clientId: string, scopes: readonly string[]): Promise<void> {
+export async function beginGoogleLogin(clientId: string, scopes: readonly string[], mode: 'login' | 'add' = 'login'): Promise<void> {
   const state = randomText();
   const verifier = randomText();
   await storageSet(STATE_KEY, state);
   await storageSet(VERIFIER_KEY, verifier);
+  await storageSet(MODE_KEY, mode);
   const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri(), response_type: 'code', scope: scopes.join(' '), state, access_type: 'offline', prompt: 'consent', code_challenge: await codeChallenge(verifier), code_challenge_method: 'S256' });
   await Linking.openURL(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 }
@@ -51,11 +53,18 @@ export async function finishGoogleLogin(url: string): Promise<boolean> {
   if (!expected || parsed.searchParams.get('state') !== expected) throw new Error('estado OAuth inválido');
   const code = parsed.searchParams.get('code');
   if (!code) throw new Error(parsed.searchParams.get('error') ?? 'login Google cancelado');
-  const response = await fetch(`${SYNC_API_URL}/auth/google/exchange`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, codeVerifier: await storageGet(VERIFIER_KEY), redirectUri: redirectUri() }) });
+  const mode = await storageGet(MODE_KEY);
+  const payload = { code, codeVerifier: await storageGet(VERIFIER_KEY), redirectUri: redirectUri() };
+  const response = mode === 'add'
+    ? await apiFetch('/auth/google/add', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    : await fetch(`${SYNC_API_URL}/auth/google/exchange`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
   if (!response.ok) throw new Error((await response.text()).slice(0, 240));
   const result = await response.json() as { sessionToken?: string };
-  if (!result.sessionToken) throw new Error('servidor não devolveu uma sessão');
-  await storageSet(TOKEN_KEY, result.sessionToken);
+  if (mode !== 'add') {
+    if (!result.sessionToken) throw new Error('servidor não devolveu uma sessão');
+    await storageSet(TOKEN_KEY, result.sessionToken);
+  }
+  await storageSet(MODE_KEY, 'login');
   return true;
 }
 

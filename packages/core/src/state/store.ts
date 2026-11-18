@@ -58,6 +58,7 @@ export interface AppStoreOptions {
   contexts?: ContextWorkspace[];
   messages?: MailMessage[];
   themeMode?: ThemeMode;
+  onMarkMessagesRead?: (messages: readonly MailMessage[], isRead: boolean) => void | Promise<void>;
 }
 
 const DEFAULT_UI: UiState = {
@@ -70,6 +71,7 @@ const DEFAULT_UI: UiState = {
 export const ALL_CONTEXTS: ContextFilter = 'all';
 
 export function createAppStore(options: AppStoreOptions = {}) {
+  const onMarkMessagesRead = options.onMarkMessagesRead;
   let snapshot: AppSnapshot = {
     accounts: [],
     contexts: [],
@@ -247,6 +249,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
         affected.map((message) => message.id),
         (message) => ({ ...message, isRead })
       );
+      void onMarkMessagesRead?.(affected, isRead);
     },
 
     toggleStar(messageId: MessageId): void {
