@@ -20,6 +20,14 @@ lugares** e cada passo pertence a um deles:
 > o app roda em **modo demo**. O passo 4 explica exatamente onde cada valor vai e o passo 5
 > mostra como reconhecer os dois modos. Ver também a seção [9](#9-o-que-ainda-não-existe-e-por-quê).
 
+### De onde vem cada valor (resumo)
+
+| Variável | Origem | Onde colar |
+| --- | --- | --- |
+| `GOOGLE_OAUTH_CLIENT_ID` | Console → **Google Auth Platform → Clientes** (criado no passo 3, aparece no modal “Cliente OAuth criado”) | `.env` na raiz de `~/at-mail` |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | mesmo lugar — campo **Segredo do cliente** / botão **Baixar JSON** | `.env` na raiz de `~/at-mail` |
+| `EXPO_PUBLIC_SYNC_API_URL` | **não vem do Google.** É a URL do *seu* serviço de sincronização, que ainda não existe | `.env` na raiz (deixe comentado = modo demo) |
+
 Comandos `gcloud` abaixo podem rodar **no Cloud Shell** (recomendado) ou no seu terminal se você
 instalar o CLI (`sudo snap install google-cloud-cli --classic`, depois `gcloud auth login`).
 Em qualquer caso, fixe o projeto:
@@ -93,8 +101,42 @@ Preencha nesta ordem (a tela só libera a próxima etapa depois da anterior):
    Para enviar e-mail adicione depois `https://www.googleapis.com/auth/gmail.send`
    (consentimento incremental, sem refazer tudo).
 4. **Usuários de teste** (só para `Externo` + `Testing`): adicione **exatamente** a conta que vai
-   fazer login. Sem isso o login morre com `Error 403: access_denied`.
+   fazer login — passo a passo na seção [2.1](#21-usuários-de-teste-onde-exatamente). Sem isso o
+   login morre com `Error 403: access_denied`.
 5. **Resumo** → salvar.
+
+### 2.1 Usuários de teste: onde exatamente
+
+> Só existe lista de teste quando o app está em **Testing / Teste**. Se ele estiver em
+> **In production / Em produção**, não há lista: qualquer conta Google pode autorizar (sujeito à
+> verificação dos escopos restritos).
+
+**Interface nova (Google Auth Platform — a que aparece em 2025/2026):**
+
+1. Abra: <https://console.cloud.google.com/auth/audience?project=at-mail-515112>
+2. No topo, confirme o status **Teste / Testing**.
+3. Role até o bloco **Usuários de teste / Test users**.
+4. Clique em **+ Adicionar usuários / Add users**.
+5. Digite o **e-mail completo Google** que fará login na tela de consentimento, ex.:
+   `ana.trabalho@empresa.com`. Aperte **Enter** para virar uma “chip” antes de salvar.
+   - Não precisa ser do mesmo domínio do projeto, mas **precisa existir** como conta Google.
+   - Para testar **Chat**, use uma conta **Workspace** (domínio corporativo/educacional).
+   - Para testar o **Gmail pessoal**, adicione também a conta `@gmail.com` — pode ter as duas na
+     lista (limite: 100 usuários).
+6. Clique em **Salvar / Save**. A lista atualiza na hora; não há etapa de aprovação.
+
+**Interface antiga (Tela de consentimento OAuth):**
+
+1. <https://console.cloud.google.com/apis/credentials/consent?project=at-mail-515112>
+2. Seção **Usuários de teste** → **+ ADD USERS** → digite o e-mail → **SAVE**.
+
+**Como saber que pegou:** abra a URL de consentimento em uma janela anônima, escolha a conta de
+teste e conclua. Se aparecer `Error 403: access_denied`, o e-mail digitado não bateu com a conta
+usada no login (ou o app está em `Testing` e a conta não está na lista).
+
+> ⚠️ Testar Chat exige **duas** coisas: a conta na lista de teste **e** o app do Chat configurado
+> em <https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat?project=at-mail-515112>
+> (seção 7). Só a lista de teste não faz `spaces.list` retornar espaços.
 
 ---
 
@@ -115,8 +157,9 @@ que é o que roda no seu Ubuntu.
 - **URIs de redirecionamento autorizados**:
   - `http://localhost:8081/auth/google/callback`
 
-Ao salvar, o Console mostra **Client ID** e **Client Secret**. Copie e feche — o secret também
-pode ser baixado depois em “Baixar JSON”.
+Ao salvar, o Console abre o modal **“Cliente OAuth criado”** com Client ID e Client Secret —
+é a única vez que o segredo aparece completo. Detalhes de onde encontrar depois: seção
+[3.5](#35-onde-aparecem-o-client-id-e-o-client-secret).
 
 ### 3.2 iOS (quando for rodar no simulador/iPhone)
 
@@ -142,18 +185,115 @@ pode ser baixado depois em “Baixar JSON”.
 - O app abre uma porta local (`http://127.0.0.1:<porta>`) para receber o código. O Google aceita
   qualquer porta nesse esquema; não precisa cadastrar a porta.
 
+### 3.5 Onde aparecem o Client ID e o Client Secret
+
+**No momento da criação** — ao clicar em **Criar / Create**, o Google abre um modal
+**“Cliente OAuth criado / OAuth client created”** com:
+
+```
+ID do cliente:      1234567890-abc123def456.apps.googleusercontent.com   ← GOOGLE_OAUTH_CLIENT_ID
+Segredo do cliente: GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx                     ← GOOGLE_OAUTH_CLIENT_SECRET
+```
+
+- Botão **Baixar JSON** → salva `client_secret_....apps.googleusercontent.com.json` com os dois
+  valores. Guarde fora do repositório (ex.: `~/.config/at-mail/`).
+- Botão **Copiar** ao lado de cada campo.
+- O segredo **só é exibido integralmente nesse modal**. Se você fechar sem copiar, não tem como
+  “ver de novo” — só gerar outro (abaixo).
+
+**Depois, para consultar novamente:**
+
+1. <https://console.cloud.google.com/auth/clients?project=at-mail-515112>
+   *(interface antiga: <https://console.cloud.google.com/apis/credentials?project=at-mail-515112>)*
+2. Clique no **nome** do cliente (ex.: `@mail web`).
+3. **ID do cliente** aparece no topo da página — é público, pode ir para o app.
+4. **Segredo do cliente / Client secrets** → lista de segredos. O valor antigo não é reexibido: use
+   **Adicionar segredo / Add secret** para gerar um novo (o antigo continua válido até ser
+   excluído — exclua depois de migrar) ou **Baixar JSON** para obter o par completo.
+
+**Quem tem segredo:**
+
+| Tipo de cliente | Client ID | Client Secret |
+| --- | --- | --- |
+| Web | sim | **sim** — obrigatório (fluxo com backend) |
+| Desktop | sim | sim, mas não é confidencial (app instalado) |
+| iOS | sim | **não existe** |
+| Android | sim | **não existe** |
+
 ---
 
 ## 4. Onde colar os valores
 
 Existem **dois** lugares, e confundir os dois é o que faz o app “não conectar”:
 
-| Valor | Para onde vai | Quem lê | Pode ir para o repositório? |
-| --- | --- | --- | --- |
-| `GOOGLE_OAUTH_CLIENT_ID` | `.env` do **backend** | servidor de sincronização | não |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | `.env` do **backend** | servidor de sincronização | **nunca** |
-| `EXPO_PUBLIC_SYNC_API_URL` | `.env` da **raiz** | app (Expo/Tauri) | sim, é público |
-| `FIGMA_ACCESS_TOKEN` | `.env` da raiz | script de tokens | não |
+| Valor | De onde vem | Para onde vai | Quem lê | Vai para o git? |
+| --- | --- | --- | --- | --- |
+| `GOOGLE_OAUTH_CLIENT_ID` | seção 3.5 (modal “Cliente OAuth criado”) | `.env` da raiz | backend de sync | não (mas é público) |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | seção 3.5, mesmo modal | `.env` da raiz | backend de sync | **nunca** |
+| `EXPO_PUBLIC_SYNC_API_URL` | **você define** — não vem do Google | `.env` da raiz | app Expo/Tauri | sim, é público |
+| `FIGMA_ACCESS_TOKEN` | Figma → Settings → Security | `.env` da raiz | script de tokens | não |
+
+### 4.1 `GOOGLE_OAUTH_CLIENT_ID`
+
+1. Copie do modal da seção 3.5 (ou da página do cliente, campo **ID do cliente**).
+2. Formato: termina em **`.apps.googleusercontent.com`**. Se não termina assim, você copiou outra
+   coisa (ex.: o *número* do projeto, `at-mail-515112` — esse **não** serve).
+3. Cole em `~/at-mail/.env`:
+
+   ```env
+   GOOGLE_OAUTH_CLIENT_ID=1234567890-abc123def456.apps.googleusercontent.com
+   ```
+
+### 4.2 `GOOGLE_OAUTH_CLIENT_SECRET`
+
+1. Copie do mesmo modal / da seção **Segredo do cliente**.
+2. Formato: começa com **`GOCSPX-`**.
+3. Cole na linha seguinte do `.env`:
+
+   ```env
+   GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+4. **Nunca** com prefixo `EXPO_PUBLIC_`. Esse prefixo é embutido no bundle JavaScript e qualquer
+   pessoa com o app instalado lê o valor. O app não usa esse segredo: quem usa é o backend.
+
+### 4.3 `EXPO_PUBLIC_SYNC_API_URL`
+
+**Este valor não existe no Console do Google.** Ele é a URL do *seu* serviço de sincronização —
+o programa que recebe `/sync/gmail` e `/sync/google-chat` (seção 9). Você só tem um valor para
+colocar aqui depois de subir esse serviço. Três estados possíveis:
+
+| Situação | Valor no `.env` | O que acontece no app |
+| --- | --- | --- |
+| Serviço ainda não existe (hoje) | `# EXPO_PUBLIC_SYNC_API_URL=...` comentado, ou linha ausente | modo demo, dados de exemplo, nenhuma chamada de rede |
+| Serviço rodando na sua máquina | `EXPO_PUBLIC_SYNC_API_URL=http://localhost:8790` | o app chama o serviço local; precisa reiniciar o `npm run web` |
+| Serviço publicado | `EXPO_PUBLIC_SYNC_API_URL=https://sync.seudominio.app` | produção; `https` obrigatório fora de localhost |
+
+**Regra de host — o `localhost` não é o mesmo para todo mundo:**
+
+| Onde o app roda | URL correta |
+| --- | --- |
+| navegador no seu Ubuntu | `http://localhost:8790` |
+| simulador iOS (Xcode) | `http://localhost:8790` |
+| emulador Android | `http://10.0.2.2:8790` (o `10.0.2.2` é o “seu PC” visto de dentro do emulador) |
+| celular físico no Wi-Fi | `http://192.168.x.y:8790` — descubra o IP com `hostname -I` 🖥️ e suba o serviço em `0.0.0.0` |
+| desktop Tauri | `http://localhost:8790` |
+
+**Como validar que a URL está certa** (antes mesmo de o app usar):
+
+```bash
+curl -i -X POST http://localhost:8790/sync/gmail \
+  -H 'content-type: application/json' -d '{"accountId":"teste"}'
+```
+
+- `401`/`400` com corpo JSON → serviço existe e está respondendo. ✅
+- `Connection refused` → nada escutando nessa porta: é exatamente o estado de hoje, por isso a
+  linha fica **comentada** no `.env`.
+
+> `EXPO_PUBLIC_*` é lido na hora do bundle. Depois de mudar o `.env`, pare o `npm run web`
+> (`Ctrl+C`) e suba de novo — hot reload não recarrega variáveis de ambiente.
+
+### 4.4 Montando o `.env`
 
 🖥️ **No seu terminal**, na raiz do projeto:
 
@@ -163,19 +303,25 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Edite `~/at-mail/.env` e deixe assim (troque pelos valores reais do Console):
+Resultado esperado (valores reais do seu Console):
 
 ```env
-GOOGLE_OAUTH_CLIENT_ID=1234567890-xxxxxxxxxxxxxxxx.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxx
+GOOGLE_CLOUD_PROJECT=at-mail-515112
+GOOGLE_OAUTH_CLIENT_ID=1234567890-abc123def456.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8081/auth/google/callback
 
-# só preencha quando o backend existir; sem esta linha o app sobe em modo demo
+# comentado = modo demo; descomente quando o serviço de sync existir
 # EXPO_PUBLIC_SYNC_API_URL=http://localhost:8790
 ```
 
-> `EXPO_PUBLIC_*` é embutido no bundle e **vira público**. Nunca coloque secret com esse prefixo.
-> O app **não** usa `GOOGLE_OAUTH_CLIENT_SECRET` — quem usa é o backend.
+Conferir o que foi gravado sem expor o segredo:
+
+```bash
+grep -E '^(GOOGLE_OAUTH_CLIENT_ID|EXPO_PUBLIC_SYNC_API_URL)=' .env   # mostra id e url
+grep -c '^GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-' .env                  # deve imprimir 1
+git status --short .env                                             # deve não listar nada
+```
 
 ---
 
@@ -312,9 +458,12 @@ Enquanto isso não é implementado, a única forma de validar credenciais é a s
 
 - [ ] As 3–4 APIs aparecem como habilitadas em `gcloud services list --enabled`
 - [ ] Tela de consentimento salva, com os escopos listados
-- [ ] Sua conta está em **Usuários de teste** (se o app está em `Testing`)
+- [ ] Sua conta está em **Usuários de teste** (seção 2.1) — status do app em `Testing`
 - [ ] Cliente OAuth **Web** criado com `http://localhost:8081` em origens **e** em redirect
-- [ ] Client ID/Secret colados no `.env` da raiz (sem `EXPO_PUBLIC_`)
+- [ ] `GOOGLE_OAUTH_CLIENT_ID` copiado do modal e terminando em `.apps.googleusercontent.com`
+- [ ] `GOOGLE_OAUTH_CLIENT_SECRET` começando com `GOCSPX-`, **sem** prefixo `EXPO_PUBLIC_`
+- [ ] `grep -c '^GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-' .env` imprime `1`
+- [ ] `EXPO_PUBLIC_SYNC_API_URL` comentado (modo demo) **ou** respondendo segundo a seção 4.3
 - [ ] `curl` do Gmail retornou seu e-mail
 - [ ] `curl` do Chat retornou espaços (ou 403 por conta `@gmail.com` — esperado)
 - [ ] Rodapé da sidebar dizendo `tudo sincronizado`/`sincronizando` (modo real)
@@ -327,6 +476,8 @@ Enquanto isso não é implementado, a única forma de validar credenciais é a s
 | --- | --- | --- |
 | `Error 403: access_denied` na tela do Google | Console → Tela de consentimento → Usuários de teste | conta não autorizada |
 | `invalid_grant` depois de ~7 dias | logs do backend | app em `Testing` expira refresh token → publicar o app |
+| `invalid_client` no Playground ou em `/auth/google/callback` | Console → Credenciais → cliente | Client Secret errado/revogado, ou ID de outro projeto → gerar novo segredo (3.5) |
+| `Connection refused` no app ao abrir | `~/at-mail/.env` | `EXPO_PUBLIC_SYNC_API_URL` aponta para um serviço que não está rodando → comente a linha (modo demo) |
 | `redirect_uri_mismatch` | Console → Credenciais → seu cliente | URI diferente (barra final, `https` vs `http`, porta) |
 | `403 insufficientPermissions` no Chat | API Chat | conta `@gmail.com` (Chat exige Workspace) |
 | `10: DEVELOPER_ERROR` no Android | Console → cliente Android | SHA-1 ou package name diferente do build |
