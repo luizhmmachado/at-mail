@@ -30,7 +30,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
-    minHeight: '100%' as unknown as number
+    flex: 1
   }
 });
