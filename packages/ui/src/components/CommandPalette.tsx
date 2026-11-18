@@ -4,7 +4,7 @@ import { formatThreadTime, threadParticipantsLabel } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useAppStore, useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
-import { Glyph } from './Glyph';
+import { Glyph } from './LucideGlyph';
 
 /**
  * Busca global (⌘K / Ctrl+K).

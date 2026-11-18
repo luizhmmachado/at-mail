@@ -27,6 +27,9 @@ export const GOOGLE_SCOPES = [
   'profile',
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/chat.messages.create',
   'https://www.googleapis.com/auth/chat.messages.readonly',
+    'https://www.googleapis.com/auth/chat.spaces.create',
+  'https://www.googleapis.com/auth/chat.spaces.create',
   'https://www.googleapis.com/auth/chat.spaces.readonly'
 ] as const;

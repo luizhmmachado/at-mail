@@ -5,6 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
+import { createGmailRawMessage } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -25,10 +26,47 @@ const config: SyncConfig = {
   webAppOrigin: 'https://at-mail.vercel.app'
 };
 
+describe('montagem MIME do e-mail', () => {
+  it('inclui corpo UTF-8 e arquivos anexados em multipart/mixed', () => {
+    const raw = createGmailRawMessage({
+      to: ['destino@example.com'],
+      subject: 'Relatório mensal',
+      body: 'Olá, segue o arquivo.',
+      attachments: [{ fileName: 'relatório.txt', mimeType: 'text/plain', base64: Buffer.from('conteúdo').toString('base64') }]
+    });
+    const mime = Buffer.from(raw, 'base64url').toString('utf8');
+
+    assert.match(mime, /Content-Type: multipart\/mixed; boundary=/);
+    assert.match(mime, /Subject: =\?UTF-8\?B\?/);
+    assert.match(mime, /Content-Disposition: attachment;/);
+    assert.match(mime, /filename\*=UTF-8''relat%C3%B3rio.txt/);
+    assert.ok(mime.includes(Buffer.from('Olá, segue o arquivo.').toString('base64')));
+    assert.ok(mime.includes(Buffer.from('conteúdo').toString('base64')));
+  });
+
+  it('mantém o formato simples para e-mail sem anexo', () => {
+    const mime = Buffer.from(createGmailRawMessage({ to: ['destino@example.com'], subject: 'Olá', body: 'Mensagem' }), 'base64url').toString('utf8');
+    assert.match(mime, /Content-Type: text\/plain; charset="UTF-8"/);
+    assert.ok(mime.endsWith('Mensagem'));
+  });
+
+  it('rejeita mais de dez anexos antes de acessar o provedor', async () => {
+    const { db, accounts } = createFakeDb();
+    accounts.set('gmail-account', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    const app = await createAppServer(config, db);
+    const attachments = Array.from({ length: 11 }, (_, index) => ({ fileName: `${index}.txt`, mimeType: 'text/plain', base64: 'YQ==' }));
+
+    const response = await call(app, 'POST', '/messages/send', '10.0.0.19', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'gmail-account', to: ['destino@example.com'], body: 'Olá', attachments }));
+
+    assert.equal(response.status, 413);
+    await app.close();
+  });
+});
+
 /** Banco de mentira: só as quatro consultas que o fluxo de login realmente usa. */
-function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<string, { userId: string; contextId: string }> } {
+function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<string, { userId: string; contextId: string; provider?: string; channel?: string }> } {
   const rows = new Map<string, PendingRow>();
-  const accounts = new Map<string, { userId: string; contextId: string }>();
+  const accounts = new Map<string, { userId: string; contextId: string; provider?: string; channel?: string }>();
 
   const db: Db = {
     pool: null as unknown as Pool,
@@ -36,6 +74,12 @@ function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<
       if (text.startsWith('SELECT user_id, expires_at FROM atmail_sessions')) {
         if (values[0] !== hashToken('test-session')) return { rows: [] };
         return { rows: [{ user_id: 'user-1', expires_at: String(Date.now() + 60_000) } as unknown as T] };
+      }
+      if (text.startsWith('SELECT provider, channel FROM atmail_accounts')) {
+        const [accountId, userId] = values as [string, string];
+        const account = accounts.get(accountId);
+        if (!account || account.userId !== userId) return { rows: [] };
+        return { rows: [{ provider: account.provider ?? 'gmail', channel: account.channel ?? 'email' } as unknown as T] };
       }
       if (text.startsWith('SELECT id FROM atmail_accounts WHERE id = ANY')) {
         const [accountIds, userId] = values as [string[], string];

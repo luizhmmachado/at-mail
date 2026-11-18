@@ -19,7 +19,7 @@ import {
 } from '../store/MailStoreProvider';
 import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
-import { Glyph, type GlyphName } from './Glyph';
+import { Glyph, type GlyphName } from './LucideGlyph';
 
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;

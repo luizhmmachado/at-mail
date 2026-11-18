@@ -9,13 +9,14 @@ import {
   useFonts
 } from '@expo-google-fonts/inter';
 import { AppShell, MailStoreProvider } from '@mail/ui';
+import type { NewMessageSubmission } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
 import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken } from './src/auth';
 import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
-import { sendEmail, updateAccountContexts } from './src/adapters/sync-client';
+import { sendChatMessage, sendEmail, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
 import type { AccountId, ContextId, UnifiedThread } from '@mail/core';
 
@@ -53,6 +54,18 @@ export default function App() {
   async function moveAccountsToContext(accountIds: AccountId[], contextId: ContextId): Promise<void> {
     if (!DEMO_MODE) await updateAccountContexts(accountIds, contextId);
     for (const accountId of accountIds) store.actions.moveAccountToContext(accountId, contextId);
+  }
+
+  async function sendNewMessage(message: NewMessageSubmission): Promise<void> {
+    if (DEMO_MODE) return;
+    if (message.channel === 'email') {
+      await sendEmail(message.accountId, { to: message.recipients, subject: message.subject, body: message.body, attachments: message.attachments });
+    } else {
+      const recipient = message.recipients[0];
+      if (!recipient) throw new Error('Informe o destinatário do Chat.');
+      await sendChatMessage(message.accountId, recipient, message.body);
+    }
+    void syncEngine.syncAll();
   }
 
   async function beginAddAccount(): Promise<void> {
@@ -132,6 +145,7 @@ export default function App() {
                 onSend={handleSend}
                 onAddAccount={() => void beginAddAccount()}
                 onMoveAccounts={moveAccountsToContext}
+                onSendNewMessage={sendNewMessage}
               />
             </MailStoreProvider>
           );

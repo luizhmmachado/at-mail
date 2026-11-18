@@ -5,7 +5,7 @@ import { encrypt, hashToken, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser } from './google.js';
 import { body, cors, html, json } from './http.js';
-import { fetchChat, fetchGmail, markGmailMessagesRead, sendGmail } from './providers.js';
+import { fetchChat, fetchGmail, markGmailMessagesRead, sendChat, sendGmail, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
@@ -148,8 +148,41 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
           const to = Array.isArray(input.to) ? input.to.map(String).filter(Boolean) : [];
-          if (to.length === 0 || !String(input.body ?? '').trim()) return json(res, 400, { error: 'destinatário e corpo são obrigatórios' }, headers);
-          await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: String(input.body), inReplyTo: input.inReplyTo ? String(input.inReplyTo) : undefined });
+          const rawAttachments = Array.isArray(input.attachments) ? input.attachments : [];
+          if (rawAttachments.length > MAX_EMAIL_ATTACHMENTS) return json(res, 413, { error: `máximo de ${MAX_EMAIL_ATTACHMENTS} anexos por e-mail` }, headers);
+          const attachments: GmailAttachmentPayload[] = [];
+          let totalAttachmentBytes = 0;
+          for (const rawAttachment of rawAttachments) {
+            if (rawAttachment === null || typeof rawAttachment !== 'object') return json(res, 400, { error: 'anexo inválido' }, headers);
+            const attachment = rawAttachment as Record<string, unknown>;
+            const fileName = typeof attachment.fileName === 'string' ? attachment.fileName.trim() : '';
+            const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
+            const base64 = typeof attachment.base64 === 'string' ? attachment.base64 : '';
+            if (!fileName || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(mimeType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+              return json(res, 400, { error: 'metadados ou conteúdo de anexo inválidos' }, headers);
+            }
+            if (base64.length > Math.ceil(MAX_EMAIL_ATTACHMENT_BYTES * 4 / 3) + 4) return json(res, 413, { error: 'tamanho total dos anexos excede 3 MB' }, headers);
+            const sizeInBytes = Buffer.from(base64, 'base64').length;
+            totalAttachmentBytes += sizeInBytes;
+            if (totalAttachmentBytes > MAX_EMAIL_ATTACHMENT_BYTES) return json(res, 413, { error: 'tamanho total dos anexos excede 3 MB' }, headers);
+            attachments.push({ fileName, mimeType, base64 });
+          }
+          const bodyText = String(input.body ?? '');
+          if (to.length === 0 || (!bodyText.trim() && attachments.length === 0)) return json(res, 400, { error: 'destinatário e corpo ou anexo são obrigatórios' }, headers);
+          await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: bodyText, inReplyTo: input.inReplyTo ? String(input.inReplyTo) : undefined, attachments });
+          return json(res, 200, { sent: true }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/send-chat' || url.pathname === '/api/messages/send-chat')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
+          const recipient = String(input.recipient ?? '').trim();
+          const message = String(input.body ?? '').trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient) || message.length === 0) {
+            return json(res, 400, { error: 'destinatário válido e mensagem são obrigatórios' }, headers);
+          }
+          await sendChat(db, config, userId, accountId, { recipient, body: message });
           return json(res, 200, { sent: true }, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
@@ -177,6 +210,8 @@ export function randomEncryptionKey(): string { return randomBytes(32).toString(
 const PENDING_TTL_MS = 10 * 60 * 1000;
 const LOGIN_START_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_START_LIMIT = 30;
+const MAX_EMAIL_ATTACHMENTS = 10;
+const MAX_EMAIL_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 const loginStartAttempts = new Map<string, number[]>();
 
 function clientAddress(req: IncomingMessage): string {
