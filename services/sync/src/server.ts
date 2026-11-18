@@ -37,8 +37,10 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         if (req.method === 'POST' && (url.pathname === '/auth/google/start' || url.pathname === '/api/auth/google/start')) {
           if (!allowLoginStart(clientAddress(req))) return json(res, 429, { error: 'muitas tentativas de login; tente novamente em alguns minutos' }, headers);
           const requestedPlatform = url.searchParams.get('platform');
-          const platform = requestedPlatform === 'web' || requestedPlatform === 'android' || requestedPlatform === 'ios' || requestedPlatform === 'tauri'
-            ? requestedPlatform
+          const platform = requestOrigin === 'https://at-mail-web.vercel.app'
+            ? 'web-legacy'
+            : requestedPlatform === 'web' || requestedPlatform === 'web-legacy' || requestedPlatform === 'android' || requestedPlatform === 'ios' || requestedPlatform === 'tauri'
+              ? requestedPlatform
             : requestOrigin === 'tauri://localhost'
               ? 'tauri'
               : requestOrigin === undefined
@@ -242,6 +244,7 @@ function oauthReturnUrl(state: string, webAppOrigin: string): string | undefined
   const separator = state.indexOf(':');
   if (separator < 0) return undefined;
   const platform = state.slice(0, separator);
+  if (platform === 'web-legacy') return 'https://at-mail-web.vercel.app/';
   if (platform === 'web' || platform === 'tauri') return `${webAppOrigin.replace(/\/+$/, '')}/`;
   if (platform === 'android' || platform === 'ios') {
     return `atmail://auth/google/callback?state=${encodeURIComponent(state)}`;

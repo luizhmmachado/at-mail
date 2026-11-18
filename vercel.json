@@ -5,6 +5,10 @@
     { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "apps/app/dist" } }
   ],
   "routes": [
+    { "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2" },
+    { "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail-web.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2" },
+    { "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/$1$2" },
+    { "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail-web.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/$1$2" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "api/index.ts" }
   ]
