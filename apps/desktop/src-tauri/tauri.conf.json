@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "@mail",
+  "version": "0.1.0",
+  "identifier": "app.atmail.desktop",
+  "build": {
+    "beforeDevCommand": "npm --workspace apps/app run web",
+    "devUrl": "http://localhost:8081",
+    "beforeBuildCommand": "npm --workspace apps/app run export:web",
+    "frontendDist": "../../app/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "@mail",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 960,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://www.googleapis.com https://gmail.googleapis.com https://chat.googleapis.com https://oauth2.googleapis.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Launcher unificado de e-mail e Google Chat",
+    "longDescription": "Multi-conta, contextos (Trabalho, Estudos, Pessoal) e caixa unificada em um app nativo leve."
+  }
+}

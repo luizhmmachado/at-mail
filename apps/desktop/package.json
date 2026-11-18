@@ -1,0 +1,13 @@
+{
+  "name": "@mail/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "tauri icon ./icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.5"
+  }
+}

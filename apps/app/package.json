@@ -1,0 +1,33 @@
+{
+  "name": "@mail/app",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "prebuild": "expo prebuild",
+    "export:web": "expo export --platform web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~58.0.17",
+    "@mail/core": "0.1.0",
+    "@mail/ui": "0.1.0",
+    "expo": "~58.0.26",
+    "expo-linking": "~58.0.17",
+    "expo-notifications": "~58.1.9",
+    "expo-secure-store": "~58.0.3",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-native": "0.88.1",
+    "react-native-web": "~0.21.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@types/react": "^19.0.0",
+    "typescript": "5.6.3"
+  }
+}

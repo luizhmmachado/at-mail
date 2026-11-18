@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "@mail",
+    "slug": "at-mail",
+    "scheme": "atmail",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.atmail.client",
+      "infoPlist": {
+        "NSUserTrackingUsageDescription": "Não rastreamos você. Este app não usa identificadores de publicidade."
+      }
+    },
+    "android": {
+      "package": "app.atmail.client",
+      "adaptiveIcon": {
+        "backgroundColor": "#FBFBFA"
+      },
+      "permissions": ["POST_NOTIFICATIONS"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "@mail",
+      "shortName": "@mail",
+      "themeColor": "#FBFBFA",
+      "backgroundColor": "#FBFBFA"
+    },
+    "plugins": ["expo-secure-store", "expo-notifications"],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "syncApiUrl": "http://localhost:8790"
+    }
+  }
+}
