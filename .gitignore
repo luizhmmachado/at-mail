@@ -21,3 +21,4 @@ apps/desktop/src-tauri/gen/
 
 # Sistema
 .DS_Store
+.vercel
