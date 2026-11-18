@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm --workspace apps/app run web",
     "devUrl": "http://localhost:8081",
-    "beforeBuildCommand": "npm --prefix ../../app run export:web",
+    "beforeBuildCommand": "npm --workspace apps/app run export:web",
     "frontendDist": "../../app/dist"
   },
   "app": {
