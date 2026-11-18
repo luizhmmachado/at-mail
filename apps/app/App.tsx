@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -119,37 +120,35 @@ export default function App() {
     }
   }, []);
 
-  if (isPublicWeb && !showWebApp) {
-    return <LandingScreen onOpenApp={() => setShowWebApp(true)} />;
-  }
-
-  if (!fontsLoaded && fontError === null) {
-    return <View style={styles.root} />;
-  }
-
-  if (!DEMO_MODE && (!GOOGLE_CLIENT_ID || !authenticated)) {
-    return <SignInScreen error={authError} onSignedIn={activateSession} />;
-  }
+  const content = isPublicWeb && !showWebApp
+    ? <LandingScreen onOpenApp={() => setShowWebApp(true)} />
+    : !fontsLoaded && fontError === null
+      ? <View style={styles.root} />
+      : !DEMO_MODE && (!GOOGLE_CLIENT_ID || !authenticated)
+        ? <SignInScreen error={authError} onSignedIn={activateSession} />
+        : (
+            <MailStoreProvider store={store}>
+              <AppShell
+                onSend={handleSend}
+                onAddAccount={() => void beginAddAccount()}
+                onMoveAccounts={moveAccountsToContext}
+              />
+            </MailStoreProvider>
+          );
 
   return (
-    <View style={styles.root}>
-      <MailStoreProvider store={store}>
-        <AppShell
-          onSend={handleSend}
-          onAddAccount={() => void beginAddAccount()}
-          onMoveAccounts={moveAccountsToContext}
-        />
-      </MailStoreProvider>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        {content}
+      </SafeAreaView>
       <StatusBar style="auto" />
-    </View>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    width: '100%',
-    height: '100%',
-    minHeight: '100%'
+    width: '100%'
   }
 });
