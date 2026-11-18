@@ -39,11 +39,18 @@ npm run android    # emulador Android (precisa do Android SDK)
 Conectar contas reais:
 
 ```bash
-cp .env.example .env       # preencha EXPO_PUBLIC_SYNC_API_URL e as credenciais
+cp .env.example .env       # Client ID/Secret vão aqui (lidos pelo backend, não pelo app)
 npm run web
 ```
 
-Passo a passo do Google Cloud: [docs/GOOGLE-API-SETUP.md](./docs/GOOGLE-API-SETUP.md).
+O projeto Google Cloud já existe: **`at-mail-515112`**. O passo a passo completo — o que fazer
+no navegador, no Cloud Shell e no seu terminal, com os links diretos — está em
+[docs/GOOGLE-API-SETUP.md](./docs/GOOGLE-API-SETUP.md).
+
+> **Importante:** este repositório entrega o *cliente*. O serviço de sincronização
+> (`/auth/google/*` + `/sync/*`), que troca o código por token e chama o Gmail/Chat, ainda não
+> existe. Sem `EXPO_PUBLIC_SYNC_API_URL` o app roda em modo demo, com dados locais.
+> O contrato do serviço está descrito na seção 9 do guia.
 
 Desktop:
 
