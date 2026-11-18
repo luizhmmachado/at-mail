@@ -18,6 +18,13 @@ import { SignInScreen } from './src/SignInScreen';
 export default function App() {
   const [authenticated, setAuthenticated] = useState(DEMO_MODE);
   const [authError, setAuthError] = useState<string>();
+
+  async function activateSession(): Promise<void> {
+    const accounts = await fetchAccounts();
+    store.actions.replaceAccounts(accounts);
+    setAuthenticated(true);
+    void syncEngine.syncAll();
+  }
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -27,11 +34,11 @@ export default function App() {
   useEffect(() => {
     if (DEMO_MODE) return;
     void sessionToken().then(async (token) => {
-      if (token !== null) store.actions.replaceAccounts(await fetchAccounts());
-      setAuthenticated(token !== null);
+      if (token !== null) await activateSession();
+      else setAuthenticated(false);
     }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha ao carregar a sessão'));
-    const complete = () => finishGoogleLogin(globalThis.location?.href ?? '').then(async (done) => { if (done) { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); } }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
-    const listener = ({ url }: { url: string }) => void finishGoogleLogin(url).then(async () => { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
+    const complete = () => finishGoogleLogin(globalThis.location?.href ?? '').then(async (done) => { if (done) await activateSession(); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
+    const listener = ({ url }: { url: string }) => void finishGoogleLogin(url).then(async () => { await activateSession(); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
     const subscription = Linking.addEventListener('url', listener);
     if (Platform.OS === 'web' && globalThis.location?.pathname.endsWith('/auth/google/callback')) void complete();
     return () => subscription.remove();
