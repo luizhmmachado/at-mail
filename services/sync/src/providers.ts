@@ -1,12 +1,19 @@
 type MailMessage = any;
 type MessageId = string;
 const brand = { message: (value: string) => value, account: (value: string) => value, context: (value: string) => value, space: (value: string) => value };
+import { randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { decrypt } from './crypto.js';
 import { refreshAccessToken } from './google.js';
 import type { SyncConfig } from './config.js';
 
 interface Credential { encrypted_refresh_token: string; email: string }
+
+export interface GmailAttachmentPayload {
+  fileName: string;
+  mimeType: string;
+  base64: string;
+}
 
 async function accessToken(db: Db, config: SyncConfig, userId: string, accountId: string): Promise<string> {
   const row = (await db.query<Credential>('SELECT encrypted_refresh_token, email FROM atmail_credentials WHERE account_id = $1 AND user_id = $2', [accountId, userId])).rows[0];
@@ -57,20 +64,93 @@ export async function sendGmail(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { to: string[]; subject?: string; body: string; inReplyTo?: string }
+  input: { to: string[]; subject?: string; body: string; inReplyTo?: string; attachments?: GmailAttachmentPayload[] }
 ): Promise<void> {
   const token = await accessToken(db, config, userId, accountId);
-  const headers = [
-    `To: ${input.to.join(', ')}`,
-    `Subject: ${input.subject ?? ''}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    'MIME-Version: 1.0',
-    ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`, `References: ${input.inReplyTo}`] : [])
-  ];
-  const raw = Buffer.from(`${headers.join('\r\n')}\r\n\r\n${input.body}`, 'utf8').toString('base64url');
+  const raw = createGmailRawMessage(input);
   await googleJsonRequest('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', token, {
     method: 'POST',
     body: JSON.stringify({ raw })
+  });
+}
+
+export function createGmailRawMessage(input: {
+  to: string[];
+  subject?: string;
+  body: string;
+  inReplyTo?: string;
+  attachments?: GmailAttachmentPayload[];
+}): string {
+  const subject = encodeMimeHeader((input.subject ?? '').replace(/[\r\n]/g, ' '));
+  const headers = [
+    `To: ${input.to.join(', ')}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0'
+  ];
+  if (input.inReplyTo) headers.push(`In-Reply-To: ${input.inReplyTo}`, `References: ${input.inReplyTo}`);
+
+  const attachments = input.attachments ?? [];
+  if (attachments.length === 0) {
+    headers.push('Content-Type: text/plain; charset="UTF-8"');
+    return Buffer.from(`${headers.join('\r\n')}\r\n\r\n${input.body}`, 'utf8').toString('base64url');
+  }
+
+  const boundary = `=_atmail_${randomUUID().replace(/-/g, '')}`;
+  headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  const parts = [
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    wrapBase64(Buffer.from(input.body, 'utf8').toString('base64'))
+  ];
+
+  for (const attachment of attachments) {
+    const fileName = attachment.fileName.replace(/[\r\n"]/g, '_').slice(0, 180) || 'anexo';
+    const fallbackName = fileName.replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(fileName);
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${attachment.mimeType}; name="${fallbackName}"; name*=UTF-8''${encodedName}`,
+      `Content-Disposition: attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrapBase64(attachment.base64)
+    );
+  }
+  parts.push(`--${boundary}--`, '');
+  return Buffer.from(`${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`, 'utf8').toString('base64url');
+}
+
+function encodeMimeHeader(value: string): string {
+  return /^[\x20-\x7E]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+}
+
+function wrapBase64(value: string): string {
+  return value.match(/.{1,76}/g)?.join('\r\n') ?? '';
+}
+
+export async function sendChat(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  input: { recipient: string; body: string }
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const requestId = randomUUID();
+  const space = await googleJsonRequest(`https://chat.googleapis.com/v1/spaces:setup?requestId=${requestId}`, token, {
+    method: 'POST',
+    body: JSON.stringify({
+      space: { spaceType: 'DIRECT_MESSAGE', singleUserBotDm: false },
+      memberships: [{ member: { name: `users/${input.recipient}`, type: 'HUMAN' } }]
+    })
+  });
+  const spaceName = typeof space.name === 'string' ? space.name : '';
+  if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName)) throw new Error('O Google Chat não retornou um espaço de conversa válido.');
+  await googleJsonRequest(`https://chat.googleapis.com/v1/${spaceName}/messages?requestId=${randomUUID()}`, token, {
+    method: 'POST',
+    body: JSON.stringify({ text: input.body })
   });
 }
 

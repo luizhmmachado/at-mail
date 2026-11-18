@@ -14,7 +14,7 @@ import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
 import { ChannelTabs } from './ChannelTabs';
 import { MobileContextCluster } from './ContextSwitcher';
-import { Glyph } from './Glyph';
+import { Glyph } from './LucideGlyph';
 import { ThreadRow } from './ThreadRow';
 
 export interface UnifiedThreadListProps {

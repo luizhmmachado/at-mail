@@ -5,7 +5,7 @@ import type { Account, AccountId, ContextId } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
-import { Glyph } from './Glyph';
+import { Glyph } from './LucideGlyph';
 
 /**
  * Rail de 64 px do frame `@mail · Desktop`.

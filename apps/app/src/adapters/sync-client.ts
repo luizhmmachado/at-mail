@@ -39,6 +39,13 @@ export interface SyncRequest {
   limit?: number;
 }
 
+export interface EmailAttachmentPayload {
+  fileName: string;
+  mimeType: string;
+  sizeInBytes: number;
+  base64: string;
+}
+
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
   const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
   if (emailMessages.length === 0) return;
@@ -57,11 +64,20 @@ export async function markMessagesRead(messages: readonly MailMessage[], isRead:
   })));
 }
 
-export async function sendEmail(accountId: string, request: SendRequest): Promise<void> {
+export async function sendEmail(accountId: string, request: SendRequest & { attachments?: EmailAttachmentPayload[] }): Promise<void> {
   const response = await apiFetch('/messages/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, ...request })
+  });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+}
+
+export async function sendChatMessage(accountId: string, recipient: string, body: string): Promise<void> {
+  const response = await apiFetch('/messages/send-chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, recipient, body })
   });
   if (!response.ok) throw new Error((await response.text()).slice(0, 240));
 }

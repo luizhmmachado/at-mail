@@ -6,7 +6,8 @@ import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } f
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { CommandPalette } from './CommandPalette';
 import { SettingsModal, WorkspaceRail } from './ContextSwitcher';
-import { Glyph, type GlyphName } from './Glyph';
+import { NewMessageComposer, type NewMessageSubmission } from './NewMessageComposer';
+import { Glyph, type GlyphName } from './LucideGlyph';
 import { ReaderPane } from './ReaderPane';
 import { UnifiedThreadList } from './UnifiedThreadList';
 import { typeStyle } from '../theme/typography';
@@ -17,18 +18,19 @@ export interface AppShellProps {
   onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
+  onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
 }
 
-export function AppShell({ onSend, onAddAccount, onMoveAccounts }: AppShellProps = {}): ReactElement {
+export function AppShell({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody onSend={onSend} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} />
+      <ShellBody onSend={onSend} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onSendNewMessage={onSendNewMessage} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): ReactElement {
+function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -52,11 +54,8 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): Rea
     if (isMobile) setMobilePane('reader');
   };
 
-  const openComposer = (): void => {
-    const threadId = snapshot.view.selectedThreadId ?? feed.threads[0]?.id;
-    if (threadId !== undefined && snapshot.view.selectedThreadId === undefined) onSelectThread(threadId);
-    actions.toggleCompose(true);
-  };
+  const openNewMessage = (): void => setNewMessageOpen(true);
+  const [newMessageOpen, setNewMessageOpen] = useState(false);
 
   if (isMobile) {
     const showReader = mobilePane === 'reader' && selectedThread !== undefined;
@@ -71,12 +70,12 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): Rea
                 <UnifiedThreadList
                   feed={feed}
                   onSelectThread={handleSelect}
-                  onCompose={openComposer}
+                  onCompose={openNewMessage}
                   onOpenSettings={() => setSettingsOpen(true)}
                   fullScreen
                 />
               </View>
-              <MobileNav active={snapshot.view.channel} onCompose={openComposer} />
+              <MobileNav active={snapshot.view.channel} onCompose={openNewMessage} />
             </>
           )}
         </View>
@@ -87,6 +86,13 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): Rea
           onClose={() => setSettingsOpen(false)}
           onAddAccount={onAddAccount}
           onMoveAccounts={onMoveAccounts}
+        />
+        <NewMessageComposer
+          visible={newMessageOpen}
+          accounts={snapshot.accounts}
+          onClose={() => setNewMessageOpen(false)}
+          onAddAccount={onAddAccount}
+          onSend={onSendNewMessage}
         />
       </View>
     );
@@ -104,7 +110,7 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): Rea
           backgroundColor: theme.colors.surface
         }}
       >
-        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openComposer} />
+        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openNewMessage} />
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -118,6 +124,13 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): Rea
         onClose={() => setSettingsOpen(false)}
         onAddAccount={onAddAccount}
         onMoveAccounts={onMoveAccounts}
+      />
+      <NewMessageComposer
+        visible={newMessageOpen}
+        accounts={snapshot.accounts}
+        onClose={() => setNewMessageOpen(false)}
+        onAddAccount={onAddAccount}
+        onSend={onSendNewMessage}
       />
     </View>
   );

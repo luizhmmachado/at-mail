@@ -10,7 +10,7 @@ import {
 import { useTheme } from '../theme/MailThemeProvider';
 import { useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
-import { Glyph } from './Glyph';
+import { Glyph } from './LucideGlyph';
 
 export interface ThreadRowProps {
   thread: UnifiedThread;

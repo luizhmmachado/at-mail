@@ -71,7 +71,11 @@ Variáveis do projeto `at-mail-sync-legacy` (Vercel → Settings → Environment
 
 A tabela `atmail_oauth_pending` é criada automaticamente por `openDb`; não há migração manual.
 
-## 4. Origens que o cliente usa
+## 4. Envio de e-mail e Google Chat
+
+O composer permite escolher uma conta, destinatários e, no caso de e-mail, anexos de até 3 MB no total (máximo de 10 arquivos). O envio Chat cria/obtém uma conversa direta e envia uma mensagem em texto. Para isso, os próximos consentimentos também solicitam `chat.messages.create` e `chat.spaces.create`.
+
+## 5. Origens que o cliente usa
 
 `apps/app/src/config.ts`:
 
@@ -80,7 +84,7 @@ A tabela `atmail_oauth_pending` é criada automaticamente por `openDb`; não há
 
 Para builds locais, defina ambos antes de `npm run web` / `expo prebuild`.
 
-## 5. Checklist de teste (uma conta nunca usada no app)
+## 6. Checklist de teste (uma conta nunca usada no app)
 
 1. Publicar a tela de consentimento (passo 1).
 2. Abrir o app **web** e clicar em *Continuar com Google*: consentimento no navegador →
