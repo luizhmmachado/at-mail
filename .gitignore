@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+.expo/
+.turbo/
+*.tsbuildinfo
+
+# Segredos — nunca versionar
+.env
+.env.*
+!.env.example
+figma.env
+.secrets/
+*.pem
+packages/core/src/theme/figma.raw.json
+
+# Desktop (Tauri)
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Sistema
+.DS_Store
