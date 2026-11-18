@@ -1,4 +1,5 @@
 export * from './theme/MailThemeProvider';
+export * from './theme/typography';
 export * from './store/MailStoreProvider';
 export * from './platform';
 export * from './hooks/useKeyboardShortcuts';
@@ -6,6 +7,7 @@ export * from './components/AppShell';
 export * from './components/CommandPalette';
 export * from './components/ChannelTabs';
 export * from './components/ContextSwitcher';
+export * from './components/Glyph';
 export * from './components/ReaderPane';
 export * from './components/ThreadRow';
 export * from './components/UnifiedThreadList';

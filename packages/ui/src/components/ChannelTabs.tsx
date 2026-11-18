@@ -1,11 +1,13 @@
-import { useState, type ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { ChannelFilter, FeedResult } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
+import { typeStyle } from '../theme/typography';
 
 export interface ChannelTabsProps {
   feed: FeedResult;
+  variant?: 'desktop' | 'mobile';
 }
 
 const TABS: { id: ChannelFilter; label: string }[] = [
@@ -14,22 +16,30 @@ const TABS: { id: ChannelFilter; label: string }[] = [
   { id: 'chat', label: 'Chat' }
 ];
 
-export function ChannelTabs({ feed }: ChannelTabsProps): ReactElement {
+/**
+ * Controle segmentado do frame: trilho de 320×32 (350×36 no mobile), raio 6/7,
+ * polegar branco de 26/30 com raio 4/5 e rótulos de 12 px.
+ */
+export function ChannelTabs({ feed, variant = 'desktop' }: ChannelTabsProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
+  const mobile = variant === 'mobile';
+
+  const height = mobile ? theme.layout.mobileSegmentHeight : theme.layout.segmentHeight;
+  const radius = mobile ? theme.layout.mobileSegmentRadius : theme.layout.segmentRadius;
+  const thumbRadius = mobile ? theme.layout.mobileSegmentThumbRadius : theme.layout.segmentThumbRadius;
+  const inset = theme.layout.segmentThumbInset;
 
   return (
     <View
       accessibilityRole="tablist"
       style={{
         flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space[1],
-        borderBottomWidth: theme.border.hairline,
-        borderBottomColor: theme.colors.borderSubtle,
-        paddingHorizontal: theme.space[3],
-        paddingBottom: theme.space[2]
+        height,
+        padding: inset,
+        borderRadius: radius,
+        backgroundColor: mobile ? theme.colors.segmentTrackMobile : theme.colors.segmentTrack
       }}
     >
       {TABS.map((tab) => {
@@ -42,72 +52,31 @@ export function ChannelTabs({ feed }: ChannelTabsProps): ReactElement {
               : feed.totalUnread;
 
         return (
-          <TabButton
+          <Pressable
             key={tab.id}
-            label={tab.label}
-            unread={unread}
-            selected={selected}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${tab.label}${unread > 0 ? `, ${unread} não lidas` : ''}`}
             onPress={() => actions.setChannel(tab.id)}
-          />
+            style={{
+              flex: 1,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: thumbRadius,
+              backgroundColor: selected ? theme.colors.segmentThumb : 'transparent'
+            }}
+          >
+            <Text
+              style={{
+                ...typeStyle(theme, 'segment', selected ? 'medium' : 'regular'),
+                color: selected ? theme.colors.textPrimary : theme.colors.textSecondary
+              }}
+            >
+              {tab.label}
+            </Text>
+          </Pressable>
         );
       })}
     </View>
-  );
-}
-
-interface TabButtonProps {
-  label: string;
-  unread: number;
-  selected: boolean;
-  onPress: () => void;
-}
-
-function TabButton({ label, unread, selected, onPress }: TabButtonProps): ReactElement {
-  const theme = useTheme();
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <Pressable
-      accessibilityRole="tab"
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space[1],
-        paddingHorizontal: theme.space[2] + 2,
-        paddingVertical: theme.space[1] + 1,
-        borderRadius: theme.radius.md,
-        backgroundColor: selected
-          ? theme.colors.surfaceSelected
-          : hovered
-            ? theme.colors.surfaceHover
-            : 'transparent'
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: theme.fonts.sans,
-          fontSize: theme.typography.size.small,
-          fontWeight: selected ? theme.weights.medium : theme.weights.regular,
-          color: selected ? theme.colors.textPrimary : theme.colors.textSecondary
-        }}
-      >
-        {label}
-      </Text>
-      {unread > 0 && (
-        <Text
-          style={{
-            fontFamily: theme.fonts.mono,
-            fontSize: theme.typography.size.micro,
-            color: selected ? theme.colors.textSecondary : theme.colors.textTertiary
-          }}
-        >
-          {unread > 99 ? '99+' : unread}
-        </Text>
-      )}
-    </Pressable>
   );
 }

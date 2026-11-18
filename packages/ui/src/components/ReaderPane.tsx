@@ -1,31 +1,49 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  contextAccent,
   formatRelativeTime,
-  formatShortcut,
   isChatMessage,
   isEmailMessage,
+  threadParticipantsLabel,
+  type Attachment,
   type MailMessage,
   type UnifiedThread
 } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
-import { useAppStore, useMailActions, useMailSnapshot, useSelectedThreadMessages } from '../store/MailStoreProvider';
+import {
+  useAppStore,
+  useFeed,
+  useMailActions,
+  useMailSnapshot,
+  useSelectedThreadMessages
+} from '../store/MailStoreProvider';
 import { currentPlatform } from '../platform';
+import { typeStyle } from '../theme/typography';
+import { Glyph, type GlyphName } from './Glyph';
 
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
 }
 
+/**
+ * Coluna de leitura de 1016 px do frame `@mail · Desktop`.
+ *
+ * Barra de ações de 72 px, título de 28/45 com 38 px de respiro depois da barra,
+ * etiqueta de 26 px, mensagens anteriores em cartão de 74 px e a última mensagem
+ * aberta, com o compositor de 132 px ao pé da coluna.
+ */
 export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const messages = useSelectedThreadMessages();
+  const { feed } = useFeed();
   const [draft, setDraft] = useState('');
-  const platform = currentPlatform();
+  const [notice, setNotice] = useState<string | undefined>(undefined);
+  const mobile = onBack !== undefined;
+  const gutter = mobile ? theme.layout.mobilePaddingX : theme.layout.readerGutter;
 
   const contextLabels = useMemo(
     () =>
@@ -35,14 +53,6 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
     [snapshot.contexts, thread]
   );
 
-  const accountLabels = useMemo(
-    () =>
-      Array.from(new Set(messages.map((message) => store.accountFor(message.accountId)?.email ?? ''))).filter(
-        (email) => email.length > 0
-      ),
-    [messages, store]
-  );
-
   if (thread === undefined) {
     return (
       <View
@@ -50,378 +60,427 @@ export function ReaderPane({ thread, onBack }: ReaderPaneProps): ReactElement {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: theme.colors.surfaceSunken,
+          backgroundColor: theme.colors.surface,
           gap: theme.space[2],
           padding: theme.space[6]
         }}
       >
-        <Text
-          style={{
-            fontFamily: theme.fonts.sans,
-            fontSize: theme.typography.size.title,
-            fontWeight: theme.weights.medium,
-            color: theme.colors.textSecondary
-          }}
-        >
+        <Text style={{ ...typeStyle(theme, 'railBrand'), color: theme.colors.textPrimary }}>@</Text>
+        <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
           Nenhuma conversa aberta
         </Text>
         <Text
           style={{
-            fontFamily: theme.fonts.sans,
-            fontSize: theme.typography.size.small,
-            color: theme.colors.textTertiary,
-            textAlign: 'center'
+            ...typeStyle(theme, 'body'),
+            color: theme.colors.textSecondary,
+            textAlign: 'center',
+            maxWidth: 320
           }}
         >
-          Use J e K para navegar. Enter abre a conversa selecionada.
+          Use J e K para navegar entre as conversas. Enter abre a selecionada.
         </Text>
       </View>
     );
   }
 
   const isArchived = thread.emailFolder === 'archived';
+  const position = feed.threads.findIndex((item) => item.id === thread.id);
+  const accountEmails = Array.from(
+    new Set(messages.map((message) => store.accountFor(message.accountId)?.email ?? ''))
+  ).filter((email) => email.length > 0);
+  const replyTarget = messages.length > 0 ? senderName(messages[messages.length - 1]!) : threadParticipantsLabel(thread, 1);
+  const platform = currentPlatform();
+  const canModifyEmail = thread.channel !== 'chat';
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.canvas }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <View
         style={{
-          paddingHorizontal: theme.space[4],
-          paddingVertical: theme.space[3],
-          gap: theme.space[2],
+          height: theme.layout.headerHeight,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 22,
+          paddingHorizontal: mobile ? theme.layout.mobilePaddingX : theme.space[8],
           borderBottomWidth: theme.border.hairline,
           borderBottomColor: theme.colors.borderSubtle,
-          backgroundColor: theme.colors.canvas
+          backgroundColor: theme.colors.surface
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[2] }}>
-          {onBack !== undefined && (
-            <Pressable accessibilityRole="button" accessibilityLabel="Voltar para a lista" onPress={onBack}>
-              <Text style={{ fontSize: 15, color: theme.colors.textSecondary }}>‹</Text>
-            </Pressable>
-          )}
-
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: theme.space[1],
-              paddingHorizontal: theme.space[2],
-              paddingVertical: 3,
-              borderRadius: theme.radius.sm,
-              backgroundColor: theme.colors.surfaceSunken,
-              borderWidth: theme.border.hairline,
-              borderColor: theme.colors.borderSubtle
-            }}
+        {onBack !== undefined && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Voltar para a lista"
+            onPress={onBack}
+            style={{ marginRight: theme.space[3], padding: theme.space[1] }}
           >
-            <Text
-              style={{
-                fontFamily: theme.fonts.mono,
-                fontSize: theme.typography.size.micro,
-                color: thread.channel === 'chat' ? theme.colors.channelChat : theme.colors.channelEmail
-              }}
-            >
-              {thread.channel === 'chat' ? 'google chat' : 'e-mail'}
-            </Text>
-          </View>
-
-          {contextLabels.map((context) => (
-            <View key={context.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <View
-                style={{
-                  width: 5,
-                  height: 5,
-                  borderRadius: theme.radius.pill,
-                  backgroundColor: theme.colors[contextAccent(context.kind)]
-                }}
-              />
-              <Text
-                style={{
-                  fontFamily: theme.fonts.sans,
-                  fontSize: theme.typography.size.micro,
-                  color: theme.colors.textTertiary
-                }}
-              >
-                {context.name}
-              </Text>
+            <View style={{ transform: [{ rotate: '90deg' }] }}>
+              <Glyph name="chevron-down" size={18} color={theme.colors.textSecondary} />
             </View>
-          ))}
+          </Pressable>
+        )}
 
-          <View style={{ flex: 1 }} />
-
-          <ReaderAction
-            label="Responder"
-            hint={formatShortcut('reply', platform)}
-            onPress={() => actions.toggleCompose(true)}
-          />
-          {!isArchived && (
-            <ReaderAction
-              label="Arquivar"
-              hint={formatShortcut('archive', platform)}
+        {canModifyEmail && (
+          <>
+            <IconButton
+              name="archive"
+              label={isArchived ? 'Arquivada' : 'Arquivar'}
               onPress={() => actions.archiveThread(thread.id)}
             />
-          )}
-        </View>
+            <IconButton name="trash" label="Excluir" onPress={() => actions.trashThread(thread.id)} />
+            <View
+              style={{
+                width: theme.border.hairline,
+                height: 18,
+                backgroundColor: theme.colors.borderSubtle
+              }}
+            />
+          </>
+        )}
 
+        <IconButton name="clock" label="Adiar e marcar como não lida" onPress={() => actions.markThreadRead(thread.id, false)} />
+
+        <View style={{ flex: 1 }} />
+
+        {position >= 0 && (
+          <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+            {position + 1} de {feed.threads.length}
+          </Text>
+        )}
+        <IconButton name="chevron-up" label="Conversa anterior" onPress={() => actions.moveSelection(-1)} />
+        <IconButton name="chevron-down" label="Próxima conversa" onPress={() => actions.moveSelection(1)} />
+      </View>
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: theme.layout.readerTitleGap, paddingBottom: theme.space[8] }}>
         <Text
           style={{
-            fontFamily: theme.fonts.sans,
-            fontSize: theme.typography.size.title,
-            lineHeight: theme.typography.line.title,
-            fontWeight: theme.weights.semibold,
-            letterSpacing: theme.typography.tracking.tight,
+            ...typeStyle(theme, mobile ? 'mobileTitle' : 'readerTitle'),
             color: theme.colors.textPrimary
           }}
         >
           {thread.subject}
         </Text>
 
-        <Text
-          style={{
-            fontFamily: theme.fonts.mono,
-            fontSize: theme.typography.size.micro,
-            color: theme.colors.textTertiary
-          }}
-        >
-          {accountLabels.join(' · ')} · {messages.length} mensagens
-        </Text>
-      </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[3] }}>
+          <View
+            style={{
+              height: theme.layout.tagHeight,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              paddingHorizontal: 10,
+              borderRadius: theme.radius.sm,
+              borderWidth: theme.border.hairline,
+              borderColor: theme.colors.borderSubtle,
+              backgroundColor: theme.colors.surfaceSunken
+            }}
+          >
+            <Glyph
+              name={thread.channel === 'chat' ? 'chat' : 'mail'}
+              size={14}
+              color={theme.colors.textSecondary}
+            />
+            <Text style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}>
+              {thread.channel === 'chat' ? 'Chat' : 'E-mail'}
+            </Text>
+            {contextLabels.length > 0 && (
+              <>
+                <View style={{ width: theme.border.hairline, height: 12, backgroundColor: theme.colors.borderSubtle }} />
+                {contextLabels.map((context) => (
+                  <Text
+                    key={context.id}
+                    style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}
+                  >
+                    {context.name}
+                  </Text>
+                ))}
+              </>
+            )}
+          </View>
+          <Text
+            style={{
+              ...typeStyle(theme, 'readerTag'),
+              color: theme.colors.textSecondary,
+              marginLeft: theme.space[4]
+            }}
+          >
+            {messages.length} {messages.length === 1 ? 'mensagem' : 'mensagens'}
+          </Text>
+        </View>
 
-      <ScrollView contentContainerStyle={{ padding: theme.space[4], gap: theme.space[4] }}>
-        {messages.map((message) => (
-          <MessageBlock key={message.id} message={message} />
-        ))}
+        <View style={{ marginTop: mobile ? theme.space[5] : theme.space[8], gap: theme.space[6] }}>
+          {messages.map((message, index) =>
+            index === messages.length - 1 ? (
+              <CurrentMessage key={message.id} message={message} />
+            ) : (
+              <EarlierMessage key={message.id} message={message} />
+            )
+          )}
+        </View>
       </ScrollView>
 
       <View
         style={{
-          borderTopWidth: theme.border.hairline,
-          borderTopColor: theme.colors.borderSubtle,
-          padding: theme.space[3],
-          gap: theme.space[2],
+          paddingHorizontal: gutter,
+          paddingBottom: theme.space[4],
           backgroundColor: theme.colors.surface
         }}
       >
-        <TextInput
-          accessibilityLabel="Escrever resposta"
-          multiline
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Responder…"
-          placeholderTextColor={theme.colors.textTertiary}
+        <View
           style={{
-            minHeight: 48,
-            maxHeight: 160,
-            paddingHorizontal: theme.space[2] + 2,
-            paddingVertical: theme.space[2],
-            borderRadius: theme.radius.md,
+            minHeight: theme.layout.composerMinHeight,
+            padding: 18,
+            borderRadius: theme.radius.xxl,
             borderWidth: theme.border.hairline,
             borderColor: theme.colors.borderSubtle,
-            backgroundColor: theme.colors.surfaceSunken,
-            fontFamily: theme.fonts.sans,
-            fontSize: theme.typography.size.body,
-            color: theme.colors.textPrimary
+            backgroundColor: theme.colors.surface
           }}
-        />
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text
-            style={{
-              fontFamily: theme.fonts.mono,
-              fontSize: theme.typography.size.micro,
-              color: theme.colors.textTertiary
-            }}
-          >
-            {accountLabels[0] ?? 'conta principal'}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Enviar resposta"
-            disabled={draft.trim().length === 0}
-            style={{
-              paddingHorizontal: theme.space[3],
-              paddingVertical: theme.space[1] + 2,
-              borderRadius: theme.radius.md,
-              backgroundColor: draft.trim().length === 0 ? theme.colors.surfaceSelected : theme.colors.accent
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: theme.fonts.sans,
-                fontSize: theme.typography.size.small,
-                fontWeight: theme.weights.medium,
-                color: draft.trim().length === 0 ? theme.colors.textTertiary : theme.colors.accentText
-              }}
-            >
-              Enviar
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[2] }}>
+            <Glyph name="reply" size={16} color={theme.colors.textSecondary} />
+            <Text style={{ ...typeStyle(theme, 'composeLabel'), color: theme.colors.textSecondary }}>
+              Responder a {replyTarget}
             </Text>
-          </Pressable>
-        </View>
-      </View>
-    </View>
-  );
-}
+          </View>
 
-function MessageBlock({ message }: { message: MailMessage }): ReactElement {
-  const theme = useTheme();
-  const sender = message.participants[0];
-  const initials = (sender?.name ?? '?')
-    .split(' ')
-    .map((part) => part[0])
-    .filter((part) => part !== undefined)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-
-  return (
-    <View style={{ flexDirection: 'row', gap: theme.space[2] + 2 }}>
-      <View
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: theme.radius.pill,
-          backgroundColor: theme.colors.surfaceSelected,
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        <Text
-          style={{
-            fontFamily: theme.fonts.sans,
-            fontSize: theme.typography.size.micro,
-            fontWeight: theme.weights.medium,
-            color: theme.colors.textSecondary
-          }}
-        >
-          {initials}
-        </Text>
-      </View>
-
-      <View style={{ flex: 1, gap: theme.space[1] }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: theme.space[2] }}>
-          <Text
-            style={{
-              fontFamily: theme.fonts.sans,
-              fontSize: theme.typography.size.small,
-              fontWeight: theme.weights.medium,
-              color: message.isRead ? theme.colors.textSecondary : theme.colors.textPrimary
+          <TextInput
+            accessibilityLabel="Escrever resposta"
+            multiline
+            autoFocus={snapshot.ui.composeOpen}
+            value={draft}
+            onChangeText={(value) => {
+              setDraft(value);
+              if (notice !== undefined) setNotice(undefined);
             }}
-          >
-            {sender?.name ?? (isChatMessage(message) ? message.senderName : '')}
-          </Text>
-          <Text
+            placeholder="Escreva uma resposta…"
+            placeholderTextColor={theme.colors.textSecondary}
             style={{
-              flex: 1,
-              fontFamily: theme.fonts.mono,
-              fontSize: theme.typography.size.micro,
-              color: theme.colors.textTertiary
-            }}
-            numberOfLines={1}
-          >
-            {sender?.email ?? ''}
-          </Text>
-          <Text
-            style={{
-              fontFamily: theme.fonts.mono,
-              fontSize: theme.typography.size.micro,
-              color: theme.colors.textTertiary
-            }}
-          >
-            {formatRelativeTime(message.receivedAt)}
-          </Text>
-        </View>
-
-        <View
-          style={
-            isEmailMessage(message)
-              ? { gap: theme.space[2] }
-              : {
-                  padding: theme.space[2] + 2,
-                  borderRadius: theme.radius.lg,
-                  backgroundColor: message.isMentioned ? theme.colors.accentMuted : theme.colors.surfaceSunken
-                }
-          }
-        >
-          <Text
-            style={{
-              fontFamily: theme.fonts.sans,
-              fontSize: theme.typography.size.body,
-              lineHeight: theme.typography.line.bodyLarge,
+              ...typeStyle(theme, 'composeBody'),
+              minHeight: 44,
+              marginTop: theme.space[2],
+              paddingVertical: 0,
               color: theme.colors.textPrimary
             }}
-          >
-            {message.bodyText}
-          </Text>
+          />
 
-          {isEmailMessage(message) && message.attachments.length > 0 && (
-            <View style={{ flexDirection: 'row', gap: theme.space[1], flexWrap: 'wrap' }}>
-              {message.attachments.map((attachment) => (
-                <View
-                  key={attachment.id}
-                  style={{
-                    paddingHorizontal: theme.space[2],
-                    paddingVertical: 2,
-                    borderRadius: theme.radius.sm,
-                    borderWidth: theme.border.hairline,
-                    borderColor: theme.colors.borderSubtle
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontFamily: theme.fonts.mono,
-                      fontSize: theme.typography.size.micro,
-                      color: theme.colors.textSecondary
-                    }}
-                  >
-                    {attachment.fileName}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[2] }}>
+            <Glyph name="attach" size={17} color={theme.colors.textSecondary} />
+            <Text
+              style={{
+                ...typeStyle(theme, 'composeBody'),
+                color: theme.colors.textSecondary,
+                marginLeft: theme.space[3]
+              }}
+            >
+              A
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>
+              {platform === 'macos' || platform === 'ios' ? '⌘' : 'Ctrl'} Enter para enviar
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Enviar resposta"
+              accessibilityState={{ disabled: draft.trim().length === 0 }}
+              onPress={() => setNotice('O envio depende do serviço de sincronização, que ainda não está conectado.')}
+              style={{
+                width: theme.layout.sendButtonWidth,
+                height: theme.layout.sendButtonHeight,
+                marginLeft: theme.space[3],
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                borderRadius: theme.radius.md,
+                backgroundColor: draft.trim().length === 0 ? theme.colors.borderStrong : theme.colors.textPrimary,
+                opacity: draft.trim().length === 0 ? 0.6 : 1
+              }}
+            >
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>Enviar</Text>
+              <Glyph name="arrow" size={14} color={theme.colors.surface} />
+            </Pressable>
+          </View>
         </View>
+
+        <Text
+          style={{
+            ...typeStyle(theme, 'composeHint'),
+            color: theme.colors.textSecondary,
+            marginTop: 10
+          }}
+        >
+          Respondendo de {accountEmails[0] ?? 'conta principal'}
+        </Text>
+        {notice !== undefined && (
+          <Text
+            style={{
+              ...typeStyle(theme, 'composeHint'),
+              color: theme.colors.textSecondary,
+              marginTop: 4
+            }}
+          >
+            {notice}
+          </Text>
+        )}
       </View>
     </View>
   );
 }
 
-function ReaderAction({ label, hint, onPress }: { label: string; hint: string; onPress: () => void }): ReactElement {
+function IconButton({
+  name,
+  label,
+  onPress
+}: {
+  name: GlyphName;
+  label: string;
+  onPress: () => void;
+}): ReactElement {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
-
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label} (${hint})`}
+      accessibilityLabel={label}
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
+      hitSlop={8}
       style={{
-        flexDirection: 'row',
+        width: 18,
+        height: 18,
         alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: theme.space[2],
-        paddingVertical: theme.space[1],
+        justifyContent: 'center',
         borderRadius: theme.radius.sm,
         backgroundColor: hovered ? theme.colors.surfaceHover : 'transparent'
       }}
     >
-      <Text
-        style={{
-          fontFamily: theme.fonts.sans,
-          fontSize: theme.typography.size.small,
-          color: theme.colors.textSecondary
-        }}
-      >
-        {label}
-      </Text>
-      <Text
-        style={{
-          fontFamily: theme.fonts.mono,
-          fontSize: theme.typography.size.micro,
-          color: theme.colors.textTertiary
-        }}
-      >
-        {hint}
-      </Text>
+      <Glyph name={name} size={18} color={theme.colors.textSecondary} />
     </Pressable>
   );
+}
+
+function EarlierMessage({ message }: { message: MailMessage }): ReactElement {
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        paddingHorizontal: theme.space[5],
+        paddingVertical: 13,
+        borderRadius: theme.radius.lg,
+        borderWidth: theme.border.hairline,
+        borderColor: theme.colors.borderSubtle,
+        backgroundColor: theme.colors.surfaceSunken,
+        gap: 6
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+        <Text style={{ ...typeStyle(theme, 'earlierName'), color: theme.colors.textPrimary }}>
+          {senderName(message)}
+        </Text>
+        <View style={{ flex: 1 }} />
+        <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+          {formatRelativeTime(message.receivedAt)}
+        </Text>
+      </View>
+      <Text style={{ ...typeStyle(theme, 'earlierBody'), color: theme.colors.textSecondary }}>
+        {message.bodyText}
+      </Text>
+    </View>
+  );
+}
+
+function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
+  const theme = useTheme();
+  const sender = message.participants[0];
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: theme.space[2] }}>
+        <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
+          {senderName(message)}
+        </Text>
+        {sender !== undefined && (
+          <Text numberOfLines={1} style={{ ...typeStyle(theme, 'readerEmail'), flexShrink: 1, color: theme.colors.textSecondary }}>
+            &lt;{sender.email}&gt;
+          </Text>
+        )}
+        <View style={{ flex: 1 }} />
+        <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+          {formatRelativeTime(message.receivedAt)}
+        </Text>
+      </View>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+        <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+          {isEmailMessage(message) ? 'para mim' : message.spaceName ?? 'chat'}
+        </Text>
+        <Glyph name="chevron-down" size={12} color={theme.colors.textSecondary} />
+      </View>
+
+      <Text
+        style={{
+          ...typeStyle(theme, 'readerBody'),
+          marginTop: theme.space[2] + 2,
+          color: theme.colors.textPrimary
+        }}
+      >
+        {message.bodyText}
+      </Text>
+
+      {isEmailMessage(message) && message.attachments.length > 0 && (
+        <View style={{ gap: theme.space[2], marginTop: theme.space[4] }}>
+          {message.attachments.map((attachment) => (
+            <AttachmentCard key={attachment.id} attachment={attachment} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function AttachmentCard({ attachment }: { attachment: Attachment }): ReactElement {
+  const theme = useTheme();
+  return (
+    <View
+      accessibilityLabel={`Anexo ${attachment.fileName}`}
+      style={{
+        width: 292,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space[3],
+        paddingHorizontal: 14,
+        height: 52,
+        borderRadius: theme.radius.lg,
+        borderWidth: theme.border.hairline,
+        borderColor: theme.colors.borderSubtle,
+        backgroundColor: theme.colors.surfaceSunken
+      }}
+    >
+      <Glyph name="file" size={21} color={theme.colors.textSecondary} />
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={{ ...typeStyle(theme, 'composeLabel'), color: theme.colors.textPrimary }}>
+          {attachment.fileName}
+        </Text>
+        <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>
+          {extensionLabel(attachment)} · {formatBytes(attachment.sizeInBytes)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function senderName(message: MailMessage): string {
+  const name = message.participants[0]?.name;
+  if (name !== undefined && name.length > 0) return name;
+  return isChatMessage(message) ? message.senderName : 'Alguém';
+}
+
+function extensionLabel(attachment: Attachment): string {
+  const extension = attachment.fileName.split('.').pop();
+  return (extension ?? attachment.mimeType.split('/').pop() ?? 'arquivo').toUpperCase();
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
