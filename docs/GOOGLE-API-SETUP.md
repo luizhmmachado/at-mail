@@ -67,7 +67,7 @@ Variáveis do projeto `at-mail-sync-legacy` (Vercel → Settings → Environment
 | `TOKEN_ENCRYPTION_KEY` | 32 bytes em base64 (`openssl rand -base64 32`) |
 | `SESSION_SECRET` | string aleatória longa |
 | `DATABASE_URL` | Postgres (o schema é criado no boot) |
-| `PUBLIC_ORIGIN` | origem do app web, usada no CORS |
+| `PUBLIC_ORIGINS` | origens permitidas pelo CORS, separadas por vírgula (ex.: `https://at-mail.vercel.app,http://tauri.localhost,tauri://localhost`) |
 
 A tabela `atmail_oauth_pending` é criada automaticamente por `openDb`; não há migração manual.
 

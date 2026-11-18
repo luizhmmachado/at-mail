@@ -20,7 +20,7 @@ const config: SyncConfig = {
   redirectUri: 'http://localhost:8790/auth/google/callback',
   sessionSecret: 'session',
   encryptionKey: Buffer.alloc(32),
-  publicOrigin: 'http://localhost:8081'
+  publicOrigins: ['http://localhost:8081', 'https://at-mail.vercel.app', 'http://tauri.localhost', 'tauri://localhost']
 };
 
 /** Banco de mentira: só as quatro consultas que o fluxo de login realmente usa. */
@@ -75,14 +75,14 @@ interface ResponseSnapshot {
   body: string;
 }
 
-async function call(app: AppServer, method: 'GET' | 'POST', path: string, ip: string): Promise<ResponseSnapshot> {
+async function call(app: AppServer, method: 'GET' | 'POST' | 'OPTIONS', path: string, ip: string, origin?: string): Promise<ResponseSnapshot> {
   return await new Promise<ResponseSnapshot>((resolve) => {
     let status = 0;
     let headers: Record<string, string> = {};
     const req = {
       method,
       url: path,
-      headers: { host: 'localhost:8790', 'x-forwarded-for': ip }
+      headers: { host: 'localhost:8790', 'x-forwarded-for': ip, ...(origin ? { origin } : {}) }
     } as unknown as IncomingMessage;
     const res = {
       writeHead(nextStatus: number, nextHeaders: Record<string, string>) {
@@ -107,6 +107,23 @@ async function startLogin(app: AppServer, ip: string): Promise<string> {
 }
 
 describe('fluxo OAuth do backend', () => {
+  it('permite preflight somente para origens configuradas', async () => {
+    const { db } = createFakeDb();
+    const app = await createAppServer(config, db);
+
+    const web = await call(app, 'OPTIONS', '/auth/google/start', '10.0.0.6', 'https://at-mail.vercel.app');
+    assert.equal(web.status, 204);
+    assert.equal(web.headers['access-control-allow-origin'], 'https://at-mail.vercel.app');
+    assert.equal(web.headers.vary, 'Origin');
+
+    const desktop = await call(app, 'OPTIONS', '/auth/google/start', '10.0.0.7', 'http://tauri.localhost');
+    assert.equal(desktop.headers['access-control-allow-origin'], 'http://tauri.localhost');
+
+    const unknown = await call(app, 'OPTIONS', '/auth/google/start', '10.0.0.8', 'https://malicious.example');
+    assert.equal(unknown.headers['access-control-allow-origin'], undefined);
+    await app.close();
+  });
+
   it('só aceita callback de um state registrado pelo /auth/google/start', async () => {
     const { db, rows } = createFakeDb();
     const app = await createAppServer(config, db);

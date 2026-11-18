@@ -12,7 +12,6 @@ export interface AppServer { handler(req: IncomingMessage, res: ServerResponse):
 
 export async function createAppServer(config: SyncConfig, database?: Db): Promise<AppServer> {
   const db = database ?? await openDb(config.databaseUrl);
-  const originHeaders = cors(config.publicOrigin);
   async function authenticated(req: IncomingMessage): Promise<string | undefined> {
     const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined;
     const cookie = req.headers.cookie?.match(/(?:^|; )atmail_session=([^;]+)/)?.[1];
@@ -29,7 +28,8 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
   return {
     async handler(req, res) {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const headers = { ...originHeaders, 'cache-control': 'no-store' };
+      const requestOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+      const headers = { ...cors(config.publicOrigins, requestOrigin), 'cache-control': 'no-store' };
       if (req.method === 'OPTIONS') return json(res, 204, null, headers);
       try {
         // Inicia um login e registra o `state` no servidor. O callback só aceita
