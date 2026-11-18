@@ -21,6 +21,7 @@ export interface FeedQuery {
   includeArchived?: boolean;
   includeSent?: boolean;
   includeTrashed?: boolean;
+  sentOnly?: boolean;
   unreadOnly?: boolean;
 }
 
@@ -58,6 +59,15 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function isSentMessage(message: MailMessage): boolean {
+  return (
+    message.channel === 'email' &&
+    message.folder !== 'trash' &&
+    message.folder !== 'spam' &&
+    (message.folder === 'sent' || message.labels.includes('SENT'))
+  );
+}
+
 /**
  * Converte mensagens brutas (e-mail + chat, várias contas) em threads unificadas.
  * Determinístico: mesma entrada, mesma ordem de saída.
@@ -83,6 +93,7 @@ export function buildUnifiedThreads(messages: readonly MailMessage[]): UnifiedTh
       isStarred: existing.flags.isStarred || message.isStarred,
       hasAttachments:
         existing.flags.hasAttachments || (message.channel === 'email' && message.attachments.length > 0),
+      hasSent: existing.flags.hasSent || isSentMessage(message),
       isMentioned: existing.flags.isMentioned || message.isMentioned,
       hasUnread: existing.unreadCount > 0
     };
@@ -118,6 +129,7 @@ function createThread(id: ThreadId, message: MailMessage): UnifiedThread {
     flags: {
       isStarred: message.isStarred,
       hasAttachments: message.channel === 'email' && message.attachments.length > 0,
+      hasSent: isSentMessage(message),
       isMentioned: message.isMentioned,
       hasUnread: unreadCount > 0
     }
@@ -227,10 +239,14 @@ function isVisible(thread: UnifiedThread, query: FeedQuery): boolean {
   if (query.unreadOnly === true && thread.unreadCount === 0) return false;
   if (query.query.trim().length > 0 && !matchesQuery(thread, query.query)) return false;
 
-  const isArchived = thread.emailFolder === ARCHIVED_FOLDER;
-  if (isArchived && query.includeArchived !== true) return false;
-  if (thread.emailFolder === 'sent' && query.includeSent !== true) return false;
-  if (thread.emailFolder === 'trash' && query.includeTrashed !== true) return false;
+  if (query.sentOnly === true) {
+    if (!thread.flags.hasSent) return false;
+  } else {
+    const isArchived = thread.emailFolder === ARCHIVED_FOLDER;
+    if (isArchived && query.includeArchived !== true) return false;
+    if (thread.emailFolder === 'sent' && query.includeSent !== true) return false;
+    if (thread.emailFolder === 'trash' && query.includeTrashed !== true) return false;
+  }
 
   return true;
 }

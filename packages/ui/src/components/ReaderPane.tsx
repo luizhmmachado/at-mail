@@ -461,14 +461,14 @@ function MessageBody({
       title: `Corpo do e-mail: ${message.subject}`,
       sandbox: '',
       referrerPolicy: 'no-referrer',
-      srcDoc: emailDocument(message.bodyHtml),
+      srcDoc: emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary),
       style: {
         display: 'block',
         width: '100%',
         height: role === 'readerBody' ? 560 : 260,
         marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0,
         border: 0,
-        backgroundColor: '#FFFFFF'
+        backgroundColor: theme.colors.surface
       }
     });
   }
@@ -495,9 +495,11 @@ function MessageBody({
   );
 }
 
-function emailDocument(bodyHtml: string): string {
-  const headContent = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\' https:; font-src https: data:; base-uri \'none\'; form-action \'none\'"><style>html,body{margin:0;max-width:100%}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>';
+function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string): string {
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;background-color:${surface};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
   const headOpen = /<head\b[^>]*>/i;
+  const headClose = /<\/head\s*>/i;
+  if (headClose.test(bodyHtml)) return bodyHtml.replace(headClose, (head) => `${headContent}${head}`);
   if (headOpen.test(bodyHtml)) return bodyHtml.replace(headOpen, (head) => `${head}${headContent}`);
   const htmlOpen = /<html\b[^>]*>/i;
   if (htmlOpen.test(bodyHtml)) return bodyHtml.replace(htmlOpen, (html) => `${html}<head>${headContent}</head>`);

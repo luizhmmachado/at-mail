@@ -107,6 +107,21 @@ describe('navegação e seleção', () => {
     assert.equal(view.selectionPinned, false);
     assert.equal(view.selectedThreadId, undefined);
   });
+
+  it('abre Enviados como filtro de e-mail e limpa o filtro ao trocar de canal', () => {
+    const store = storeWithSeed();
+    const thread = store.getFeed().threads.find((item) => item.channel === 'email');
+    assert.ok(thread !== undefined);
+    store.actions.selectThread(thread.id);
+
+    store.actions.setSentOnly(true);
+    assert.equal(store.getSnapshot().view.channel, 'email');
+    assert.equal(store.getSnapshot().view.sentOnly, true);
+    assert.equal(store.getSnapshot().view.selectedThreadId, undefined);
+
+    store.actions.setChannel('chat');
+    assert.equal(store.getSnapshot().view.sentOnly, false);
+  });
 });
 
 describe('ação de arquivar', () => {
