@@ -1,4 +1,6 @@
-import { SyncError } from '@mail/core';
+class SyncError extends Error {
+  constructor(message: string, readonly kind: 'auth' | 'rate-limit' | 'network' | 'provider' | 'unknown' = 'unknown') { super(message); }
+}
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';

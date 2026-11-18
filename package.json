@@ -1,5 +1,6 @@
 {
   "name": "@mail/root",
+  "type": "module",
   "private": true,
   "version": "0.1.0",
   "description": "@mail — launcher unificado de e-mail e Google Chat",
