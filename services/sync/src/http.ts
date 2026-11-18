@@ -19,8 +19,13 @@ export async function body(req: IncomingMessage): Promise<Record<string, unknown
   return parsed as Record<string, unknown>;
 }
 
-export function cors(origin: string): Record<string, string> {
-  return { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
+export function cors(allowedOrigins: readonly string[], requestOrigin?: string): Record<string, string> {
+  const originHeaders: Record<string, string> = {};
+  if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+    originHeaders['access-control-allow-origin'] = requestOrigin;
+    originHeaders.vary = 'Origin';
+  }
+  return { ...originHeaders, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
 }
 
 export { createServer };

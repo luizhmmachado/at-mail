@@ -14,7 +14,7 @@ export interface SyncConfig {
   redirectUri: string;
   sessionSecret: string;
   encryptionKey: Buffer;
-  publicOrigin: string;
+  publicOrigins: string[];
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
@@ -32,7 +32,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
     redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI ?? `http://localhost:${port}/auth/google/callback`,
     sessionSecret: requiredFrom(env, 'SESSION_SECRET', false) || encryption,
     encryptionKey,
-    publicOrigin: env.PUBLIC_ORIGIN ?? 'http://localhost:8081'
+    publicOrigins: (env.PUBLIC_ORIGINS ?? env.PUBLIC_ORIGIN ?? 'http://localhost:8081')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean)
   };
 }
 

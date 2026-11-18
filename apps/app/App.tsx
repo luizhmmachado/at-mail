@@ -15,6 +15,7 @@ import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, pendingLoginState, s
 import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
 import { sendEmail } from './src/adapters/sync-client';
+import { LandingScreen } from './src/LandingScreen';
 import type { UnifiedThread } from '@mail/core';
 
 function messageOf(error: unknown, fallback: string): string {
@@ -22,6 +23,7 @@ function messageOf(error: unknown, fallback: string): string {
 }
 
 export default function App() {
+  const [showWebApp, setShowWebApp] = useState(Platform.OS !== 'web');
   const [authenticated, setAuthenticated] = useState(DEMO_MODE);
   const [authError, setAuthError] = useState<string>();
 
@@ -108,6 +110,10 @@ export default function App() {
       void ensureNotificationPermission();
     }
   }, []);
+
+  if (Platform.OS === 'web' && !showWebApp) {
+    return <LandingScreen onOpenApp={() => setShowWebApp(true)} />;
+  }
 
   if (!fontsLoaded && fontError === null) {
     return <View style={styles.root} />;
