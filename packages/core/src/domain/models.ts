@@ -101,6 +101,7 @@ export type MailMessage = EmailMessage | ChatMessage;
 export interface ThreadFlags {
   isStarred: boolean;
   hasAttachments: boolean;
+  hasSent: boolean;
   isMentioned: boolean;
   hasUnread: boolean;
 }

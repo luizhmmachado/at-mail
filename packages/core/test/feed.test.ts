@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   formatThreadTime,
   groupByDate,
+  isEmailMessage,
   matchesQuery,
   parseQuery,
   selectFeed
@@ -133,6 +134,75 @@ describe('filtros de contexto e canal', () => {
     const feed = selectFeed(fixture(), { contextId: 'all', channel: 'all', query: '' });
     assert.equal(feed.threadCountByContext.work, 2);
     assert.equal(feed.threadCountByContext.studies, 1);
+  });
+
+  it('lista threads com mensagem enviada, mesmo quando a resposta mais recente foi recebida', () => {
+    const base = fixture().find(isEmailMessage);
+    assert.ok(base !== undefined);
+
+    const sent = {
+      ...base,
+      id: brand.message('sent-1'),
+      subject: 'Projeto',
+      providerThreadId: 'sent-thread',
+      folder: 'sent' as const,
+      labels: ['SENT'],
+      receivedAt: NOW - 20_000
+    };
+    const reply = {
+      ...sent,
+      id: brand.message('sent-2'),
+      subject: 'Re: Projeto',
+      folder: 'inbox' as const,
+      labels: [],
+      receivedAt: NOW - 10_000
+    };
+    const inboxOnly = {
+      ...sent,
+      id: brand.message('inbox-only'),
+      subject: 'Outro assunto',
+      providerThreadId: 'inbox-thread',
+      folder: 'inbox' as const,
+      labels: [],
+      receivedAt: NOW
+    };
+    const trashedSent = {
+      ...sent,
+      id: brand.message('trashed-sent'),
+      providerThreadId: 'trashed-thread',
+      folder: 'trash' as const,
+      labels: ['SENT', 'TRASH']
+    };
+
+    const feed = selectFeed([sent, reply, inboxOnly, trashedSent], {
+      contextId: 'all',
+      channel: 'email',
+      query: '',
+      sentOnly: true
+    });
+
+    assert.equal(feed.threads.length, 1);
+    assert.equal(feed.threads[0]?.messageIds.length, 2);
+    assert.equal(feed.threads[0]?.emailFolder, 'inbox');
+    assert.equal(feed.threads[0]?.flags.hasSent, true);
+  });
+
+  it('mantém mensagens exclusivamente enviadas fora de Tudo e dentro de Enviados', () => {
+    const base = fixture().find(isEmailMessage);
+    assert.ok(base !== undefined);
+    const sent = {
+      ...base,
+      id: brand.message('sent-only'),
+      folder: 'sent' as const,
+      labels: ['SENT']
+    };
+    const messages = [sent];
+
+    assert.equal(selectFeed(messages, { contextId: 'all', channel: 'all', query: '' }).threads.length, 0);
+    assert.equal(
+      selectFeed(messages, { contextId: 'all', channel: 'email', query: '', sentOnly: true }).threads.length,
+      1
+    );
   });
 });
 

@@ -49,6 +49,7 @@ export default function App() {
       body,
       inReplyTo: last.channel === 'email' ? last.rfcMessageId : undefined
     });
+    void syncEngine.syncAll();
   }
 
   async function moveAccountsToContext(accountIds: AccountId[], contextId: ContextId): Promise<void> {

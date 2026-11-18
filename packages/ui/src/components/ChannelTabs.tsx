@@ -10,9 +10,10 @@ export interface ChannelTabsProps {
   variant?: 'desktop' | 'mobile';
 }
 
-const TABS: { id: ChannelFilter; label: string }[] = [
+const TABS: { id: ChannelFilter | 'sent'; label: string }[] = [
   { id: 'all', label: 'Tudo' },
   { id: 'email', label: 'E-mail' },
+  { id: 'sent', label: 'Enviados' },
   { id: 'chat', label: 'Chat' }
 ];
 
@@ -43,13 +44,20 @@ export function ChannelTabs({ feed, variant = 'desktop' }: ChannelTabsProps): Re
       }}
     >
       {TABS.map((tab) => {
-        const selected = snapshot.view.channel === tab.id;
+        const selected =
+          tab.id === 'sent'
+            ? snapshot.view.sentOnly
+            : snapshot.view.channel === tab.id && !snapshot.view.sentOnly;
         const unread =
-          tab.id === 'email'
-            ? feed.unreadByChannel.email
-            : tab.id === 'chat'
-              ? feed.unreadByChannel.chat
-              : feed.totalUnread;
+          tab.id === 'sent'
+            ? snapshot.view.sentOnly
+              ? feed.unreadByChannel.email
+              : 0
+            : tab.id === 'email'
+              ? feed.unreadByChannel.email
+              : tab.id === 'chat'
+                ? feed.unreadByChannel.chat
+                : feed.totalUnread;
 
         return (
           <Pressable
@@ -57,7 +65,7 @@ export function ChannelTabs({ feed, variant = 'desktop' }: ChannelTabsProps): Re
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             accessibilityLabel={`${tab.label}${unread > 0 ? `, ${unread} não lidas` : ''}`}
-            onPress={() => actions.setChannel(tab.id)}
+            onPress={() => (tab.id === 'sent' ? actions.setSentOnly(true) : actions.setChannel(tab.id))}
             style={{
               flex: 1,
               alignItems: 'center',

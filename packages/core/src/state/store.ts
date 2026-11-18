@@ -21,6 +21,7 @@ import {
 export interface ViewState {
   contextId: ContextFilter;
   channel: ChannelFilter;
+  sentOnly: boolean;
   query: string;
   unreadOnly: boolean;
   selectedThreadId?: ThreadId;
@@ -79,6 +80,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
     view: {
       contextId: ALL_CONTEXTS,
       channel: 'all',
+      sentOnly: false,
       query: '',
       unreadOnly: false,
       selectionPinned: false
@@ -110,7 +112,12 @@ export function createAppStore(options: AppStoreOptions = {}) {
 
   function setView(partial: Partial<ViewState>): void {
     const view = { ...snapshot.view, ...partial };
-    if (partial.contextId !== undefined || partial.channel !== undefined || partial.query !== undefined) {
+    if (
+      partial.contextId !== undefined ||
+      partial.channel !== undefined ||
+      partial.sentOnly !== undefined ||
+      partial.query !== undefined
+    ) {
       view.selectionPinned = false;
       view.selectedThreadId = undefined;
     }
@@ -128,6 +135,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
     const result = selectFeed(snapshot.messages, {
       contextId: snapshot.view.contextId,
       channel: snapshot.view.channel,
+      sentOnly: snapshot.view.sentOnly,
       query: snapshot.view.query,
       unreadOnly: snapshot.view.unreadOnly
     });
@@ -184,7 +192,12 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     setChannel(channel: ChannelFilter): void {
-      setView({ channel });
+      setView({ channel, sentOnly: false });
+      ensureSelection();
+    },
+
+    setSentOnly(sentOnly: boolean): void {
+      setView({ channel: sentOnly ? 'email' : snapshot.view.channel, sentOnly });
       ensureSelection();
     },
 
