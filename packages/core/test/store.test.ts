@@ -134,6 +134,35 @@ describe('ação de arquivar', () => {
   });
 });
 
+describe('ação de excluir', () => {
+  it('move o e-mail para a lixeira e limpa a seleção', () => {
+    const store = storeWithSeed();
+    const target = store.getFeed().threads.find((thread) => thread.channel === 'email');
+    assert.ok(target !== undefined);
+
+    store.actions.selectThread(target.id);
+    const before = store.getFeed().threads.length;
+    store.actions.trashThread(target.id);
+
+    assert.equal(store.getFeed().threads.length, before - 1);
+    assert.equal(store.getThread(target.id), undefined);
+    assert.notEqual(store.getSnapshot().view.selectedThreadId, target.id);
+
+    const trashed = store.getSnapshot().messages.find((message) => message.id === target.messageIds[0]);
+    assert.equal(trashed?.channel === 'email' ? trashed.folder : undefined, 'trash');
+  });
+
+  it('não altera conversa de chat', () => {
+    const store = storeWithSeed();
+    const target = store.getFeed().threads.find((thread) => thread.channel === 'chat');
+    assert.ok(target !== undefined);
+
+    store.actions.trashThread(target.id);
+
+    assert.notEqual(store.getThread(target.id), undefined);
+  });
+});
+
 describe('mensagens', () => {
   it('upsert deduplica por id', () => {
     const store = storeWithSeed();

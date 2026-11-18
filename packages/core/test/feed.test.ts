@@ -5,6 +5,7 @@ import {
   buildUnifiedThreads,
   createSeedData,
   formatRelativeTime,
+  formatThreadTime,
   groupByDate,
   matchesQuery,
   parseQuery,
@@ -189,5 +190,16 @@ describe('agrupamento por data', () => {
     assert.equal(formatRelativeTime(NOW - 30_000, NOW), 'agora');
     assert.equal(formatRelativeTime(NOW - 5 * 60_000, NOW), '5 min');
     assert.equal(formatRelativeTime(NOW - 2 * 3_600_000, NOW), '2 h');
+  });
+
+  it('formata a hora da lista como relógio no dia atual', () => {
+    const today = new Date(2026, 0, 15, 10, 42, 0).getTime();
+    assert.equal(formatThreadTime(today, today + 60_000), '10:42');
+
+    const yesterday = new Date(2026, 0, 14, 18, 0, 0).getTime();
+    assert.equal(formatThreadTime(yesterday, today), 'ontem');
+
+    const older = new Date(2026, 0, 2, 9, 0, 0).getTime();
+    assert.equal(formatThreadTime(older, today), '02/01');
   });
 });

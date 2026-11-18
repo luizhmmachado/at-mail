@@ -20,6 +20,7 @@ export interface FeedQuery {
   query: string;
   includeArchived?: boolean;
   includeSent?: boolean;
+  includeTrashed?: boolean;
   unreadOnly?: boolean;
 }
 
@@ -229,6 +230,7 @@ function isVisible(thread: UnifiedThread, query: FeedQuery): boolean {
   const isArchived = thread.emailFolder === ARCHIVED_FOLDER;
   if (isArchived && query.includeArchived !== true) return false;
   if (thread.emailFolder === 'sent' && query.includeSent !== true) return false;
+  if (thread.emailFolder === 'trash' && query.includeTrashed !== true) return false;
 
   return true;
 }
@@ -323,6 +325,22 @@ export function formatRelativeTime(timestamp: number, now: number = Date.now()):
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
   }
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+/**
+ * Hora no formato da lista (Figma: `10:42`).
+ *
+ * Hoje mostra o relógio, ontem mostra o rótulo e datas anteriores mostram dia/mês —
+ * a mesma progressão de detalhe usada no frame `@mail · Desktop`.
+ */
+export function formatThreadTime(timestamp: number, now: number = Date.now()): string {
+  const bucket = bucketFor(timestamp, now);
+  const date = new Date(timestamp);
+  if (bucket === 'hoje') {
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (bucket === 'ontem') return 'ontem';
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
 export function collectAccountIds(threads: readonly UnifiedThread[]): AccountId[] {

@@ -52,6 +52,25 @@ async function figma(path) {
 }
 
 const tokens = JSON.parse(readFileSync(TOKENS_PATH, 'utf8'));
+
+/**
+ * O arquivo publicado já foi conferido contra os frames (papéis tipográficos,
+ * gutters e alturas de linha). Rodar a heurística de novo sem intenção trocaria
+ * esses valores por aproximações, então exigimos `--force`.
+ */
+if (tokens.meta?.status === 'extracted' && !process.argv.includes('--force')) {
+  console.log(
+    [
+      '',
+      '@mail · tokens já extraídos e revisados manualmente — nada foi alterado.',
+      '  Para reler o Figma e sobrescrever (revisar o diff depois):',
+      '    npm run tokens:sync -- --force',
+      ''
+    ].join('\n')
+  );
+  process.exit(0);
+}
+
 const mapped = [];
 const unmapped = [];
 
@@ -98,9 +117,22 @@ applyTypographyScale(tokens, extracted.fontSizes);
 applySpacing(tokens, extracted.spacings);
 applyRadii(tokens, extracted.radii);
 
-tokens.meta.status = 'extracted';
-tokens.meta.extractedAt = new Date().toISOString();
+const hasSignal =
+  mapped.length > 0 ||
+  extracted.cycle.fontSizes > 0 ||
+  extracted.cycle.spacings > 0 ||
+  extracted.cycle.radii > 0;
+
 tokens.meta.nodeId = NODE_ID;
+if (hasSignal) {
+  tokens.meta.status = 'extracted';
+  tokens.meta.extractedAt = new Date().toISOString();
+} else {
+  console.log(
+    '\n  Nada foi extraído do Figma (sem variáveis mapeadas e sem auto-layout no node informado).' +
+      '\n  status permanece "provisional" — confirme o node-id do frame real.'
+  );
+}
 
 writeFileSync(TOKENS_PATH, `${JSON.stringify(tokens, null, 2)}\n`, 'utf8');
 writeFileSync(

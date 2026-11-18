@@ -128,6 +128,15 @@ function kebab(value: string): string {
   return value.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
+/**
+ * O Figma expressa letter-spacing em % do tamanho da fonte (ex.: -1% em 12px = -0.12px),
+ * que é exatamente o que o React Native espera depois de convertido para px.
+ */
+export function letterSpacing(fontSize: number, level: keyof typeof typography.tracking = 'tight'): number {
+  const percent = typography.tracking[level];
+  return Number(((fontSize * percent) / 100).toFixed(2));
+}
+
 export function contextAccent(role: string): ColorRole {
   switch (role) {
     case 'work':

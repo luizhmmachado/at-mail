@@ -268,6 +268,21 @@ export function createAppStore(options: AppStoreOptions = {}) {
       }
     },
 
+    trashThread(threadId: ThreadId): void {
+      const affected = snapshot.messages.filter(
+        (message) => message.channel === 'email' && groupingKey(message) === threadId
+      );
+      if (affected.length === 0) return;
+      patchMessagesById(
+        affected.map((message) => message.id),
+        (message) => ({ ...message, folder: 'trash' as const, isRead: true })
+      );
+      if (snapshot.view.selectedThreadId === threadId) {
+        patch({ view: { ...snapshot.view, selectedThreadId: undefined, selectionPinned: false } });
+        ensureSelection();
+      }
+    },
+
     addContext(context: ContextWorkspace): void {
       if (snapshot.contexts.some((existing) => existing.id === context.id)) return;
       patch({ contexts: [...snapshot.contexts, context].sort(byOrder) });
