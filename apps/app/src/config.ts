@@ -17,19 +17,16 @@ export const DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 /**
  * Escopos OAuth2 solicitados no consentimento.
  *
- * `gmail.modify` permite ler, arquivar e marcar como lido — sem `send` o app
- * não pode enviar e-mail em nome do usuário sem novo consentimento.
- * Para envio, adicione `https://www.googleapis.com/auth/gmail.send`.
+ * `gmail.modify` permite ler, editar e enviar e-mails. Os escopos do Chat
+ * permitem ler conversas e enviar mensagens.
  */
 export const GOOGLE_SCOPES = [
   'openid',
   'email',
   'profile',
   'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/chat.messages.create',
   'https://www.googleapis.com/auth/chat.messages.readonly',
-    'https://www.googleapis.com/auth/chat.spaces.create',
   'https://www.googleapis.com/auth/chat.spaces.create',
   'https://www.googleapis.com/auth/chat.spaces.readonly'
 ] as const;
