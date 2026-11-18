@@ -1,6 +1,6 @@
 import { brand } from '@mail/core';
 import type { ChatMessage, EmailMessage, MailMessage, MailboxAdapter, SyncPage } from '@mail/core';
-import { SYNC_API_URL } from '../config';
+import { apiFetch } from '../auth';
 
 export interface SyncEnvelopeDto {
   messages: RawMessageDto[];
@@ -47,10 +47,9 @@ export interface SyncRequest {
  * direto com a API do Google; na web o backend é obrigatório.
  */
 export async function requestSync(provider: string, request: SyncRequest): Promise<SyncEnvelopeDto> {
-  const response = await fetch(`${SYNC_API_URL}/sync/${provider}`, {
+  const response = await apiFetch(`/sync/${provider}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(request)
   });
 
