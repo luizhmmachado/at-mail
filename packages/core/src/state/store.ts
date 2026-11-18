@@ -135,14 +135,11 @@ export function createAppStore(options: AppStoreOptions = {}) {
     return result;
   }
 
-  /** Garante que sempre exista uma thread selecionada válida para o filtro atual. */
   function ensureSelection(): void {
     const { threads } = feed();
     const current = snapshot.view.selectedThreadId;
-    if (current !== undefined && threads.some((thread) => thread.id === current)) return;
-    const nextThreadId = threads[0]?.id;
-    if (nextThreadId === snapshot.view.selectedThreadId) return;
-    patch({ view: { ...snapshot.view, selectedThreadId: nextThreadId, selectionPinned: false } });
+    if (current === undefined || threads.some((thread) => thread.id === current)) return;
+    patch({ view: { ...snapshot.view, selectedThreadId: undefined, selectionPinned: false } });
   }
 
   function unreadForContext(contextId: ContextId): number {
@@ -212,7 +209,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
       const { threads } = feed();
       if (threads.length === 0) return;
       const currentIndex = threads.findIndex((thread) => thread.id === snapshot.view.selectedThreadId);
-      const baseIndex = currentIndex < 0 ? 0 : currentIndex;
+      const baseIndex = currentIndex < 0 ? (direction === 1 ? -1 : threads.length) : currentIndex;
       const nextIndex = Math.min(threads.length - 1, Math.max(0, baseIndex + direction));
       const nextThread = threads[nextIndex];
       if (nextThread === undefined) return;
@@ -346,8 +343,6 @@ export function createAppStore(options: AppStoreOptions = {}) {
       ensureSelection();
     }
   };
-
-  ensureSelection();
 
   return {
     getSnapshot: (): AppSnapshot => snapshot,

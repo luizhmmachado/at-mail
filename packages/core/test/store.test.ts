@@ -72,12 +72,19 @@ describe('contextos', () => {
 });
 
 describe('navegação e seleção', () => {
-  it('seleciona a primeira thread automaticamente', () => {
-    const store = storeWithSeed();
+  it('aguarda seleção explícita ao abrir e sincronizar mensagens', () => {
+    const seed = createSeedData(NOW);
+    const store = createAppStore({ contexts: seed.contexts, accounts: seed.accounts });
+    assert.equal(store.getSnapshot().view.selectedThreadId, undefined);
+
+    store.actions.upsertMessages(seed.messages);
+    assert.equal(store.getSnapshot().view.selectedThreadId, undefined);
+
     const first = store.getFeed().threads[0];
     assert.ok(first !== undefined);
+    store.actions.moveSelection(1);
     assert.equal(store.getSnapshot().view.selectedThreadId, first.id);
-    assert.equal(store.getSnapshot().view.selectionPinned, false);
+    assert.equal(store.getSnapshot().view.selectionPinned, true);
   });
 
   it('J/K respeitam os limites da lista', () => {
@@ -98,9 +105,7 @@ describe('navegação e seleção', () => {
     store.actions.setContext(brand.context('studies'));
     const view = store.getSnapshot().view;
     assert.equal(view.selectionPinned, false);
-    const thread = store.getThread(view.selectedThreadId!);
-    assert.ok(thread !== undefined);
-    assert.ok(thread.contextIds.includes(brand.context('studies')));
+    assert.equal(view.selectedThreadId, undefined);
   });
 });
 
