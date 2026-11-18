@@ -223,6 +223,14 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
           )}
           <View style={styles.footerBottom}>
             <Text style={styles.footerMeta}>@mail — menos abas, mais conversa.</Text>
+            <View style={styles.footerLegalLinks}>
+              <Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://at-mail.vercel.app/privacy.html')}>
+                <Text style={styles.footerMeta}>Privacidade</Text>
+              </Pressable>
+              <Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://at-mail.vercel.app/terms.html')}>
+                <Text style={styles.footerMeta}>Termos</Text>
+              </Pressable>
+            </View>
             <Text style={styles.footerMeta}>Feito para simplificar.</Text>
           </View>
         </View>
@@ -435,5 +443,6 @@ const styles = StyleSheet.create({
   footerNav: { flexDirection: 'row', alignItems: 'center', gap: 44 },
   footerNavText: { color: '#18181B', fontFamily: FONT_MEDIUM, fontSize: 13 },
   footerBottom: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, marginTop: 26, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E4E4E7' },
+  footerLegalLinks: { flexDirection: 'row', gap: 18 },
   footerMeta: { color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 11 }
 });
