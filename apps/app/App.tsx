@@ -26,7 +26,10 @@ export default function App() {
 
   useEffect(() => {
     if (DEMO_MODE) return;
-    void sessionToken().then((token) => setAuthenticated(token !== null));
+    void sessionToken().then(async (token) => {
+      if (token !== null) store.actions.replaceAccounts(await fetchAccounts());
+      setAuthenticated(token !== null);
+    }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha ao carregar a sessão'));
     const complete = () => finishGoogleLogin(globalThis.location?.href ?? '').then(async (done) => { if (done) { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); } }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
     const listener = ({ url }: { url: string }) => void finishGoogleLogin(url).then(async () => { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
     const subscription = Linking.addEventListener('url', listener);
