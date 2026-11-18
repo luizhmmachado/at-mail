@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from 'react-native';
 import type { ThreadId } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
@@ -60,6 +60,7 @@ function ShellBody(): ReactElement {
             </>
           )}
         </View>
+        <SyncStatus />
         <CommandPalette />
       </View>
     );
@@ -84,7 +85,42 @@ function ShellBody(): ReactElement {
         <ReaderPane thread={selectedThread} />
       </View>
 
+      <SyncStatus />
       <CommandPalette />
+    </View>
+  );
+}
+
+/** Feedback persistente e discreto durante a primeira carga/sync incremental. */
+function SyncStatus(): ReactElement | null {
+  const theme = useTheme();
+  const { sync } = useMailSnapshot();
+  if (sync.status !== 'syncing') return null;
+
+  return (
+    <View
+      accessibilityRole="status"
+      accessibilityLabel="Atualizando mensagens"
+      style={{
+        position: 'absolute',
+        top: theme.space[3],
+        right: theme.space[4],
+        zIndex: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space[2],
+        paddingHorizontal: theme.space[3],
+        height: 30,
+        borderWidth: theme.border.hairline,
+        borderColor: theme.colors.borderSubtle,
+        borderRadius: theme.radius.pill,
+        backgroundColor: theme.colors.surface
+      }}
+    >
+      <ActivityIndicator size="small" color={theme.colors.accent} />
+      <Text style={{ ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary }}>
+        Atualizando…
+      </Text>
     </View>
   );
 }
