@@ -18,18 +18,33 @@ Publicar (não precisa de código):
 3. Em *Tipo de usuário*, mantenha **Externo**; em *Status de publicação*, clique em
    **Publicar app** (Teste → Em produção).
 
+Publicar não remove o aviso de app não verificado. Em produção, contas fora da lista de
+teste podem tentar autorizar o app, mas escopos confidenciais/restritos não aprovados
+continuam exibindo o aviso e sujeitos ao limite vitalício de 100 usuários do projeto.
+Para remover o aviso, verifique e publique a marca e conclua a análise de acesso a dados.
+Isso exige que a lista de escopos do Google Cloud corresponda aos escopos realmente
+solicitados pelos clientes OAuth, justificativas para cada escopo confidencial/restrito
+e um vídeo do YouTube demonstrando o uso dos escopos em todos os clientes OAuth do projeto.
+O domínio usado no branding também precisa ser verificado no Google Search Console.
+
 ### Escopos sensíveis/restritos
 
-O app pede `gmail.modify`, `gmail.send` e os escopos de Chat — classificados pelo Google como
-**restritos/sensíveis**. Em produção:
+O app pede `gmail.modify` e `chat.messages.readonly` (restritos), além de
+`chat.messages.create`, `chat.spaces.create` e `chat.spaces.readonly` (sensíveis).
+`gmail.modify` já permite ler, editar e enviar e-mails, então não é necessário pedir
+`gmail.send` também. Em produção:
 
 - contas de fora da organização veem o aviso "app não verificado" até a verificação concluir;
-- a verificação de escopos restritos exige revisão do Google (e, para `gmail.*`, a avaliação
-  CASA). Sem verificacao, o app fica publicado com limite de **100 usuários novos**;
+- os escopos restritos exigem análise do Google; como o servidor processa esses dados,
+  também pode ser necessária uma avaliação de segurança independente (CASA);
+- sem verificação, o limite é de **100 usuários no total durante a vida do projeto**, não
+  apenas novos usuários;
 - para uso interno/pessoal, a alternativa é manter a tela em **Teste** e cadastrar os e-mails
   em *Usuários de teste* (limite de 100).
 
-Passo a passo de verificação: *Tela de consentimento OAuth → Verificação do app*.
+Inicie em *Tela de consentimento OAuth → Central de verificação*. O envio fica disponível
+depois que a marca estiver verificada/publicada e os dados de escopo, justificativas e vídeo
+estiverem preenchidos. A aprovação final depende da análise do Google.
 
 ## 2. Redirect URI (o que quebrava no APK e no desktop)
 
@@ -71,9 +86,14 @@ Variáveis do projeto `at-mail-sync-legacy` (Vercel → Settings → Environment
 
 A tabela `atmail_oauth_pending` é criada automaticamente por `openDb`; não há migração manual.
 
-## 4. Envio de e-mail e Google Chat
+## 4. Escopos e recursos
 
-O composer permite escolher uma conta, destinatários e, no caso de e-mail, anexos de até 3 MB no total (máximo de 10 arquivos). O envio Chat cria/obtém uma conversa direta e envia uma mensagem em texto. Para isso, os próximos consentimentos também solicitam `chat.messages.create` e `chat.spaces.create`.
+O app solicita `gmail.modify` para exibir, organizar e enviar mensagens; `chat.messages.readonly`
+e `chat.spaces.readonly` para ler o Google Chat; e `chat.messages.create` e
+`chat.spaces.create` para criar/obter conversas diretas e enviar mensagens de texto. Os escopos
+de leitura do Gmail e das mensagens do Chat são restritos; os demais escopos do Chat são
+sensíveis. O composer permite escolher destinatários e, no caso de e-mail, anexar até 10
+arquivos (3 MB no total).
 
 ## 5. Origens que o cliente usa
 
