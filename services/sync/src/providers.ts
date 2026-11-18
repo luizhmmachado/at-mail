@@ -25,6 +25,55 @@ async function googleJson(url: string, token: string): Promise<any> {
   return json;
 }
 
+async function googleJsonRequest(url: string, token: string, init: RequestInit): Promise<any> {
+  const response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers ?? {}) } });
+  const json = await response.json() as any;
+  if (!response.ok) throw new Error(`Google API ${response.status}: ${JSON.stringify(json).slice(0, 240)}`);
+  return json;
+}
+
+function providerMessageId(id: string): string {
+  return id.slice(id.lastIndexOf(':') + 1);
+}
+
+export async function markGmailMessagesRead(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  messageIds: readonly string[],
+  isRead: boolean
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  await Promise.all(messageIds.map((id) => googleJsonRequest(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(providerMessageId(id))}/modify`,
+    token,
+    { method: 'POST', body: JSON.stringify(isRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }) }
+  )));
+}
+
+export async function sendGmail(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  input: { to: string[]; subject?: string; body: string; inReplyTo?: string }
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const headers = [
+    `To: ${input.to.join(', ')}`,
+    `Subject: ${input.subject ?? ''}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'MIME-Version: 1.0',
+    ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`, `References: ${input.inReplyTo}`] : [])
+  ];
+  const raw = Buffer.from(`${headers.join('\r\n')}\r\n\r\n${input.body}`, 'utf8').toString('base64url');
+  await googleJsonRequest('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', token, {
+    method: 'POST',
+    body: JSON.stringify({ raw })
+  });
+}
+
 function decodeBase64Url(value: string | undefined): string {
   if (!value) return '';
   return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -35,12 +84,30 @@ function header(headers: Array<{ name: string; value: string }> | undefined, nam
 }
 
 function bodyFromPayload(payload: any): string {
-  if (payload?.body?.data) return decodeBase64Url(payload.body.data);
+  const plainPart = (payload?.parts ?? []).find((part: any) => part?.mimeType === 'text/plain');
+  if (plainPart) {
+    const text = bodyFromPayload(plainPart);
+    if (text) return text;
+  }
+  if (payload?.body?.data) {
+    const decoded = decodeBase64Url(payload.body.data);
+    return payload.mimeType === 'text/html' ? htmlToText(decoded) : decoded;
+  }
   for (const part of payload?.parts ?? []) {
     const text = bodyFromPayload(part);
     if (text) return text;
   }
   return '';
+}
+
+function htmlToText(value: string): string {
+  return value
+    .replace(/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis, '$2 ($1)')
+    .replace(/<br\s*\/?>(\s*)/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor?: string; removedIds: MessageId[] }> {

@@ -1,14 +1,15 @@
 import { createAppStore, createPresetContexts, createSeedData, SyncEngine } from '@mail/core';
 import type { MailboxAdapter, SyncPage } from '@mail/core';
 import { DEMO_MODE } from './config';
-import { createHttpAdapter } from './adapters/sync-client';
+import { createHttpAdapter, markMessagesRead } from './adapters/sync-client';
 
 const seed = createSeedData();
 
 export const store = createAppStore({
   contexts: DEMO_MODE ? seed.contexts : createPresetContexts(),
   accounts: DEMO_MODE ? seed.accounts : [],
-  messages: DEMO_MODE ? seed.messages : []
+  messages: DEMO_MODE ? seed.messages : [],
+  onMarkMessagesRead: DEMO_MODE ? undefined : markMessagesRead
 });
 
 /** Em modo demo nada sai para a rede: a UI é explorada com dados locais. */

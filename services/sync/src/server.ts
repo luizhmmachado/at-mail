@@ -5,7 +5,7 @@ import { encrypt, hashToken, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser } from './google.js';
 import { body, cors, json } from './http.js';
-import { fetchChat, fetchGmail } from './providers.js';
+import { fetchChat, fetchGmail, markGmailMessagesRead, sendGmail } from './providers.js';
 import { readVault, writeVault } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
@@ -50,6 +50,20 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         }
         const userId = await authenticated(req);
         if (!userId) return json(res, 401, { error: 'não autenticado' }, headers);
+        if (req.method === 'POST' && (url.pathname === '/auth/google/add' || url.pathname === '/api/auth/google/add')) {
+          const input = await body(req);
+          const exchanged = await exchangeCode({ code: String(input.code ?? ''), codeVerifier: input.codeVerifier ? String(input.codeVerifier) : undefined, redirectUri: String(input.redirectUri ?? config.redirectUri), clientId: config.clientId, clientSecret: config.clientSecret });
+          const user = await getUser(exchanged.accessToken);
+          const now = Date.now();
+          const accountId = `google:${user.sub}:gmail`;
+          const encryptedRefresh = encrypt(exchanged.refreshToken ?? '', config.encryptionKey);
+          await db.query('INSERT INTO atmail_credentials (account_id, user_id, provider, email, encrypted_refresh_token, scopes, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(account_id) DO UPDATE SET user_id=excluded.user_id, encrypted_refresh_token=excluded.encrypted_refresh_token, scopes=excluded.scopes, updated_at=excluded.updated_at', [accountId, userId, 'gmail', user.email, encryptedRefresh, exchanged.scope, now]);
+          await db.query('INSERT INTO atmail_accounts (id, user_id, provider, channel, email, display_name, context_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, email=excluded.email, display_name=excluded.display_name, updated_at=excluded.updated_at', [accountId, userId, 'gmail', 'email', user.email, user.name ?? user.email, 'work', now]);
+          const chatAccountId = `google:${user.sub}:chat`;
+          await db.query('INSERT INTO atmail_credentials (account_id, user_id, provider, email, encrypted_refresh_token, scopes, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(account_id) DO UPDATE SET user_id=excluded.user_id, encrypted_refresh_token=excluded.encrypted_refresh_token, scopes=excluded.scopes, updated_at=excluded.updated_at', [chatAccountId, userId, 'google-chat', user.email, encryptedRefresh, exchanged.scope, now]);
+          await db.query('INSERT INTO atmail_accounts (id, user_id, provider, channel, email, display_name, context_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, email=excluded.email, display_name=excluded.display_name, updated_at=excluded.updated_at', [chatAccountId, userId, 'google-chat', 'chat', user.email, `${user.name ?? user.email} · Chat`, 'work', now]);
+          return json(res, 200, { added: true }, headers);
+        }
         if (req.method === 'GET' && (url.pathname === '/vault' || url.pathname === '/api/vault')) return json(res, 200, await readVault(db, userId, Number(url.searchParams.get('since') ?? 0)), headers);
         if (req.method === 'GET' && (url.pathname === '/accounts' || url.pathname === '/api/accounts')) {
           const accounts = (await db.query<{ id: string; provider: string; channel: string; email: string; display_name: string; context_id: string; updated_at: string }>('SELECT id, provider, channel, email, display_name, context_id, updated_at FROM atmail_accounts WHERE user_id = $1 ORDER BY updated_at', [userId])).rows;
@@ -58,6 +72,25 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         if (req.method === 'PUT' && (url.pathname === '/vault' || url.pathname === '/api/vault')) {
           const input = await body(req);
           return json(res, 200, await writeVault(db, userId, Array.isArray(input.records) ? input.records as never[] : []), headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/read' || url.pathname === '/api/messages/read')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
+          const messageIds = Array.isArray(input.messageIds) ? input.messageIds.map(String) : [];
+          await markGmailMessagesRead(db, config, userId, accountId, messageIds, input.isRead !== false);
+          return json(res, 200, { updated: messageIds.length }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/send' || url.pathname === '/api/messages/send')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
+          const to = Array.isArray(input.to) ? input.to.map(String).filter(Boolean) : [];
+          if (to.length === 0 || !String(input.body ?? '').trim()) return json(res, 400, { error: 'destinatário e corpo são obrigatórios' }, headers);
+          await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: String(input.body), inReplyTo: input.inReplyTo ? String(input.inReplyTo) : undefined });
+          return json(res, 200, { sent: true }, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
         if (req.method === 'POST' && syncMatch) {
