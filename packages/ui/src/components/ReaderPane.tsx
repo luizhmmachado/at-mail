@@ -499,10 +499,7 @@ function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
-  const darkWrappers = mode === 'dark'
-    ? `body>table,body>center,body>div,body>center>table{background-color:${surface}!important}`
-    : '';
-  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}${darkWrappers}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
   if (headClose.test(bodyHtml)) return bodyHtml.replace(headClose, (head) => `${headContent}${head}`);
