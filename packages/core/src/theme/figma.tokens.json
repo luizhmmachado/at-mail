@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "source": "figma",
+    "fileKey": "qqjxZUMeAj95mXV7wYtTEw",
+    "nodeId": "0-1",
+    "status": "provisional",
+    "extractedAt": null,
+    "note": "PROVISÓRIO. Valores pendentes de extração do Figma. Rode `npm run tokens:sync` com FIGMA_ACCESS_TOKEN para sobrescrever com os valores exatos do arquivo de design."
+  },
+  "color": {
+    "canvas": { "light": "#FBFBFA", "dark": "#0E0E10" },
+    "surface": { "light": "#FFFFFF", "dark": "#151517" },
+    "surfaceHover": { "light": "#F4F4F2", "dark": "#1B1B1E" },
+    "surfaceSelected": { "light": "#EFEFEC", "dark": "#222226" },
+    "surfaceSunken": { "light": "#F6F6F4", "dark": "#111113" },
+    "borderSubtle": { "light": "#EAEAE7", "dark": "#262629" },
+    "borderStrong": { "light": "#D6D6D1", "dark": "#34343A" },
+    "textPrimary": { "light": "#1A1A19", "dark": "#F2F2EF" },
+    "textSecondary": { "light": "#61615C", "dark": "#A0A0A6" },
+    "textTertiary": { "light": "#8E8E88", "dark": "#71717A" },
+    "textInverted": { "light": "#FFFFFF", "dark": "#0E0E10" },
+    "accent": { "light": "#3B3B6D", "dark": "#C8C8FF" },
+    "accentMuted": { "light": "#EDEDF7", "dark": "#24243A" },
+    "accentText": { "light": "#FFFFFF", "dark": "#0E0E10" },
+    "focusRing": { "light": "#3B3B6D", "dark": "#C8C8FF" },
+    "contextWork": { "light": "#3E63DD", "dark": "#8CA5FF" },
+    "contextStudies": { "light": "#B26A00", "dark": "#E2A64B" },
+    "contextPersonal": { "light": "#2E7D5B", "dark": "#6FD3A8" },
+    "contextCustom": { "light": "#7A5AF8", "dark": "#BCAAFF" },
+    "channelEmail": { "light": "#5B6472", "dark": "#9AA3B2" },
+    "channelChat": { "light": "#0F8F6F", "dark": "#57C9A9" },
+    "danger": { "light": "#B42318", "dark": "#FF8A80" },
+    "warning": { "light": "#B26A00", "dark": "#E2A64B" },
+    "success": { "light": "#1F7A4D", "dark": "#6FD3A8" },
+    "unreadDot": { "light": "#3B3B6D", "dark": "#C8C8FF" }
+  },
+  "typography": {
+    "familySans": { "light": "Inter", "dark": "Inter" },
+    "familyMono": { "light": "JetBrains Mono", "dark": "JetBrains Mono" },
+    "size": { "micro": 11, "caption": 12, "small": 13, "body": 14, "bodyLarge": 15, "title": 17, "titleLarge": 20, "display": 24 },
+    "line": { "micro": 14, "caption": 16, "small": 18, "body": 20, "bodyLarge": 22, "title": 24, "titleLarge": 26, "display": 30 },
+    "weight": { "regular": "400", "medium": "500", "semibold": "600" },
+    "tracking": { "tight": -0.2, "normal": 0, "wide": 0.4 }
+  },
+  "space": { "0": 0, "1": 4, "2": 8, "3": 12, "4": 16, "5": 20, "6": 24, "8": 32, "10": 40, "12": 48 },
+  "radius": { "sm": 4, "md": 6, "lg": 8, "xl": 12, "pill": 999 },
+  "border": { "hairline": 1 },
+  "layout": {
+    "sidebarWidth": 232,
+    "sidebarCollapsedWidth": 56,
+    "listWidth": 396,
+    "readerMinWidth": 420,
+    "headerHeight": 52,
+    "rowHeight": 68,
+    "mobileBreakpoint": 860
+  },
+  "motion": {
+    "fast": 120,
+    "base": 180,
+    "easing": "cubic-bezier(0.2, 0, 0, 1)"
+  }
+}
