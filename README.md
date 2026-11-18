@@ -58,17 +58,29 @@ Desktop:
 npm run desktop            # tauri dev (Rust + WebView do SO)
 ```
 
-## Design tokens (Figma)
+## Design aplicado (Figma)
 
-Os tokens vêm do arquivo do Figma, não de valores inventados:
+O layout vem do arquivo `qqjxZUMeAj95mXV7wYtTEw`, frames **`@mail · Desktop` (2:2, 1440×900)**
+e **`@mail · Mobile` (2:6, 390×844)**, não de valores aproximados:
+
+- rail de 64 px com tiles de contexto 48×58 e indicadores de 8 px;
+- caixa unificada de 360 px: título 20/24, busca 34 px, segmentado 32 px, linha de 72 px com
+  indicador de 6 px, assunto 12/15 e divisor recuado 24 px;
+- leitura com barra de ações de 72 px, gutter de 80 px (856 px de conteúdo), título 28/45,
+  etiqueta de 26 px, cartão de mensagem anterior de 74 px e compositor de 132 px;
+- mobile com linha de 84 px, segmentado de 36 px e navegação inferior de 84 px;
+- **Inter** 400/500/600 embarcada; letter-spacing de -1% convertido em px.
+
+| Desktop | Mobile (lista) | Mobile (leitura) |
+| --- | --- | --- |
+| ![Desktop](./docs/screenshots/desktop.png) | ![Lista](./docs/screenshots/mobile-list.png) | ![Leitura](./docs/screenshots/mobile-reader.png) |
+
+Os valores e a tabela de papéis tipográficos estão em
+[docs/DESIGN-TOKENS.md](./docs/DESIGN-TOKENS.md). Para reler o Figma:
 
 ```bash
-npm run tokens:sync        # exige FIGMA_ACCESS_TOKEN no .env
+npm run tokens:sync -- --force   # exige FIGMA_ACCESS_TOKEN no .env
 ```
-
-Enquanto o token do Figma não for aplicado, `figma.tokens.json` está marcado como
-`"status": "provisional"`. Instruções completas (inclusive como entregar a chave com
-segurança): [docs/DESIGN-TOKENS.md](./docs/DESIGN-TOKENS.md).
 
 ## Atalhos (Desktop/Web)
 

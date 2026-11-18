@@ -7,7 +7,9 @@
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.atmail.client",
@@ -20,7 +22,9 @@
       "adaptiveIcon": {
         "backgroundColor": "#FBFBFA"
       },
-      "permissions": ["POST_NOTIFICATIONS"]
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -30,7 +34,11 @@
       "themeColor": "#FBFBFA",
       "backgroundColor": "#FBFBFA"
     },
-    "plugins": ["expo-secure-store", "expo-notifications"],
+    "plugins": [
+      "expo-secure-store",
+      "expo-notifications",
+      "expo-font"
+    ],
     "experiments": {
       "typedRoutes": false
     },
