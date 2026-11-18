@@ -1,13 +1,13 @@
 import { brand, type MailMessage, type MessageId } from '@mail/core';
-import type { DatabaseSync } from 'node:sqlite';
+import type { Db } from './db';
 import { decrypt } from './crypto';
 import { refreshAccessToken } from './google';
 import type { SyncConfig } from './config';
 
 interface Credential { encrypted_refresh_token: string; email: string }
 
-async function accessToken(db: DatabaseSync, config: SyncConfig, userId: string, accountId: string): Promise<string> {
-  const row = db.prepare('SELECT encrypted_refresh_token, email FROM credentials WHERE account_id = ? AND user_id = ?').get(accountId, userId) as Credential | undefined;
+async function accessToken(db: Db, config: SyncConfig, userId: string, accountId: string): Promise<string> {
+  const row = (await db.query<Credential>('SELECT encrypted_refresh_token, email FROM atmail_credentials WHERE account_id = $1 AND user_id = $2', [accountId, userId])).rows[0];
   if (!row) throw new Error('conta Google não conectada');
   return refreshAccessToken(decrypt(row.encrypted_refresh_token, config.encryptionKey), config.clientId, config.clientSecret);
 }
@@ -41,7 +41,7 @@ function bodyFromPayload(payload: any): string {
   return '';
 }
 
-export async function fetchGmail(db: DatabaseSync, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor?: string; removedIds: MessageId[] }> {
+export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor?: string; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
   const list = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50${cursor ? `&pageToken=${encodeURIComponent(cursor)}` : ''}`, token);
   const messages: MailMessage[] = [];
@@ -60,7 +60,7 @@ export async function fetchGmail(db: DatabaseSync, config: SyncConfig, userId: s
   return { messages, cursor: list.nextPageToken, removedIds: [] };
 }
 
-export async function fetchChat(db: DatabaseSync, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
+export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
   const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
   const messages: MailMessage[] = [];

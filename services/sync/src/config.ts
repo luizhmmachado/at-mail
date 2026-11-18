@@ -8,7 +8,7 @@ function required(name: string): string {
 
 export interface SyncConfig {
   port: number;
-  databasePath: string;
+  databaseUrl: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -24,7 +24,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
   if (encryptionKey.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY deve decodificar para 32 bytes');
   return {
     port: Number(env.PORT ?? 8790),
-    databasePath: env.DATABASE_PATH ?? './data/at-mail.db',
+    databaseUrl: requiredFrom(env, 'DATABASE_URL'),
     clientId: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_ID'),
     clientSecret: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_SECRET'),
     redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI ?? 'http://localhost:8081/auth/google/callback',
