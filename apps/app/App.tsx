@@ -11,19 +11,20 @@ import { AppShell, MailStoreProvider } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
-import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, pendingLoginState, sessionToken } from './src/auth';
+import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken } from './src/auth';
 import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
-import { sendEmail } from './src/adapters/sync-client';
+import { sendEmail, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
-import type { UnifiedThread } from '@mail/core';
+import type { AccountId, ContextId, UnifiedThread } from '@mail/core';
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
 export default function App() {
-  const [showWebApp, setShowWebApp] = useState(Platform.OS !== 'web');
+  const isPublicWeb = Platform.OS === 'web' && !isTauriRuntime();
+  const [showWebApp, setShowWebApp] = useState(!isPublicWeb);
   const [authenticated, setAuthenticated] = useState(DEMO_MODE);
   const [authError, setAuthError] = useState<string>();
 
@@ -46,6 +47,11 @@ export default function App() {
       body,
       inReplyTo: last.channel === 'email' ? last.rfcMessageId : undefined
     });
+  }
+
+  async function moveAccountsToContext(accountIds: AccountId[], contextId: ContextId): Promise<void> {
+    if (!DEMO_MODE) await updateAccountContexts(accountIds, contextId);
+    for (const accountId of accountIds) store.actions.moveAccountToContext(accountId, contextId);
   }
 
   async function beginAddAccount(): Promise<void> {
@@ -78,12 +84,14 @@ export default function App() {
     void (async () => {
       try {
         if ((await sessionToken()) !== null) {
+          setShowWebApp(true);
           await activateSession();
           return;
         }
         // Um login iniciado antes de o app ser fechado pode já ter sido concluído no navegador.
         const pending = await pendingLoginState();
         if (pending !== null) {
+          setShowWebApp(true);
           try {
             await awaitGoogleLogin(pending, { timeoutMs: 8000 });
             await activateSession();
@@ -111,7 +119,7 @@ export default function App() {
     }
   }, []);
 
-  if (Platform.OS === 'web' && !showWebApp) {
+  if (isPublicWeb && !showWebApp) {
     return <LandingScreen onOpenApp={() => setShowWebApp(true)} />;
   }
 
@@ -126,7 +134,11 @@ export default function App() {
   return (
     <View style={styles.root}>
       <MailStoreProvider store={store}>
-        <AppShell onSend={handleSend} onAddAccount={() => void beginAddAccount()} />
+        <AppShell
+          onSend={handleSend}
+          onAddAccount={() => void beginAddAccount()}
+          onMoveAccounts={moveAccountsToContext}
+        />
       </MailStoreProvider>
       <StatusBar style="auto" />
     </View>

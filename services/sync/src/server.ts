@@ -36,7 +36,15 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         // states criados aqui, então esta rota pública não grava nada arbitrário.
         if (req.method === 'POST' && (url.pathname === '/auth/google/start' || url.pathname === '/api/auth/google/start')) {
           if (!allowLoginStart(clientAddress(req))) return json(res, 429, { error: 'muitas tentativas de login; tente novamente em alguns minutos' }, headers);
-          const state = opaqueToken();
+          const requestedPlatform = url.searchParams.get('platform');
+          const platform = requestedPlatform === 'web' || requestedPlatform === 'android' || requestedPlatform === 'ios' || requestedPlatform === 'tauri'
+            ? requestedPlatform
+            : requestOrigin === 'tauri://localhost'
+              ? 'tauri'
+              : requestOrigin === undefined
+                ? 'android'
+                : 'web';
+          const state = `${platform}:${opaqueToken()}`;
           const now = Date.now();
           await db.query('DELETE FROM atmail_oauth_pending WHERE created_at < $1', [now - PENDING_TTL_MS]);
           await db.query('INSERT INTO atmail_oauth_pending (state, code, error, created_at) VALUES ($1, $2, $3, $4)', [state, '', '', now]);
@@ -52,8 +60,9 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           // Sem o `state` pré-registrado, a requisição é descartada: esta rota é pública.
           const known = (await db.query<{ state: string }>('UPDATE atmail_oauth_pending SET code = $1, error = $2 WHERE state = $3 AND created_at > $4 RETURNING state', [authorizationCode, authorizationError, state, Date.now() - PENDING_TTL_MS])).rows;
           if (known.length === 0) return html(res, 400, oauthPage('Sessão de login expirada', 'Este login não foi iniciado pelo @mail ou já expirou. Volte ao app e tente novamente.'), headers);
-          if (authorizationCode.length === 0) return html(res, 200, oauthPage('Login não concluído', 'O Google recusou a autorização. Volte ao @mail e tente novamente.'), headers);
-          return html(res, 200, oauthPage('Login concluído', 'Pode voltar ao @mail — esta janela já pode ser fechada.'), headers);
+          const returnUrl = oauthReturnUrl(state, config.webAppOrigin);
+          if (authorizationCode.length === 0) return html(res, 200, oauthPage('Login não concluído', 'O Google recusou a autorização. Voltando ao @mail…', returnUrl), headers);
+          return html(res, 200, oauthPage('Login concluído', 'Voltando ao @mail…', returnUrl), headers);
         }
         if (req.method === 'GET' && (url.pathname === '/auth/google/code' || url.pathname === '/api/auth/google/code')) {
           const state = (url.searchParams.get('state') ?? '').slice(0, 128);
@@ -95,6 +104,25 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           await db.query('INSERT INTO atmail_credentials (account_id, user_id, provider, email, encrypted_refresh_token, scopes, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(account_id) DO UPDATE SET user_id=excluded.user_id, encrypted_refresh_token=excluded.encrypted_refresh_token, scopes=excluded.scopes, updated_at=excluded.updated_at', [chatAccountId, userId, 'google-chat', user.email, encryptedRefresh, exchanged.scope, now]);
           await db.query('INSERT INTO atmail_accounts (id, user_id, provider, channel, email, display_name, context_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, email=excluded.email, display_name=excluded.display_name, updated_at=excluded.updated_at', [chatAccountId, userId, 'google-chat', 'chat', user.email, `${user.name ?? user.email} · Chat`, 'work', now]);
           return json(res, 200, { added: true }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/accounts/context' || url.pathname === '/api/accounts/context')) {
+          const input = await body(req);
+          const accountIds = Array.isArray(input.accountIds) ? [...new Set(input.accountIds.map(String).filter(Boolean))] : [];
+          const contextId = String(input.contextId ?? '');
+          if (accountIds.length === 0 || accountIds.length > 10 || !['work', 'studies', 'personal'].includes(contextId)) {
+            return json(res, 400, { error: 'contas e contexto válido são obrigatórios' }, headers);
+          }
+          const ownedAccounts = (await db.query<{ id: string }>(
+            'SELECT id FROM atmail_accounts WHERE id = ANY($1::text[]) AND user_id = $2',
+            [accountIds, userId]
+          )).rows;
+          if (ownedAccounts.length !== accountIds.length) return json(res, 404, { error: 'uma ou mais contas não foram encontradas' }, headers);
+          const updated = (await db.query<{ id: string }>(
+            'UPDATE atmail_accounts SET context_id = $1, updated_at = $2 WHERE id = ANY($3::text[]) AND user_id = $4 RETURNING id',
+            [contextId, Date.now(), accountIds, userId]
+          )).rows;
+          if (updated.length !== accountIds.length) return json(res, 404, { error: 'uma ou mais contas não foram encontradas' }, headers);
+          return json(res, 200, { updated: updated.length }, headers);
         }
         if (req.method === 'GET' && (url.pathname === '/vault' || url.pathname === '/api/vault')) return json(res, 200, await readVault(db, userId, Number(url.searchParams.get('since') ?? 0)), headers);
         if (req.method === 'GET' && (url.pathname === '/accounts' || url.pathname === '/api/accounts')) {
@@ -175,7 +203,20 @@ function allowLoginStart(address: string, now = Date.now()): boolean {
 }
 
 /** Página mostrada no navegador depois do consentimento do Google. */
-function oauthPage(title: string, message: string): string {
+function oauthReturnUrl(state: string, webAppOrigin: string): string | undefined {
+  const separator = state.indexOf(':');
+  if (separator < 0) return undefined;
+  const platform = state.slice(0, separator);
+  if (platform === 'web' || platform === 'tauri') return `${webAppOrigin.replace(/\/+$/, '')}/`;
+  if (platform === 'android' || platform === 'ios') {
+    return `atmail://auth/google/callback?state=${encodeURIComponent(state)}`;
+  }
+  return undefined;
+}
+
+function oauthPage(title: string, message: string, returnUrl?: string): string {
+  const returnLink = returnUrl === undefined ? '' : `<p><a href="${returnUrl}">Continuar no @mail</a></p>`;
+  const returnScript = returnUrl === undefined ? '' : `<script>window.location.replace(${JSON.stringify(returnUrl)});</script>`;
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -197,7 +238,9 @@ function oauthPage(title: string, message: string): string {
       <span>@mail</span>
       <h1>${title}</h1>
       <p>${message}</p>
+      ${returnLink}
     </main>
+    ${returnScript}
   </body>
 </html>`;
 }

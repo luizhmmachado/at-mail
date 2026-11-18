@@ -58,7 +58,7 @@ export function redirectUri(): string {
   return `${SYNC_API_URL}/auth/google/callback`;
 }
 
-function isTauriRuntime(): boolean {
+export function isTauriRuntime(): boolean {
   return typeof globalThis === 'object' && globalThis !== null && '__TAURI_INTERNALS__' in globalThis;
 }
 
@@ -85,7 +85,8 @@ function queryString(params: ReadonlyArray<readonly [string, string]>): string {
  * state desconhecido é descartado, o que mantém a rota pública protegida.
  */
 async function startLogin(): Promise<string> {
-  const response = await fetch(`${SYNC_API_URL}/auth/google/start`, { method: 'POST' });
+  const platform = isTauriRuntime() ? 'tauri' : Platform.OS;
+  const response = await fetch(`${SYNC_API_URL}/auth/google/start?platform=${encodeURIComponent(platform)}`, { method: 'POST' });
   if (response.status === 429) throw new Error('Muitas tentativas de login. Aguarde alguns minutos e tente de novo.');
   if (!response.ok) throw new Error(`Não foi possível iniciar o login (${response.status}).`);
   const result = (await response.json()) as { state?: string };

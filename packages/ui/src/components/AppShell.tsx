@@ -1,11 +1,11 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from 'react-native';
-import type { ThreadId, UnifiedThread } from '@mail/core';
+import type { AccountId, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { CommandPalette } from './CommandPalette';
-import { WorkspaceRail } from './ContextSwitcher';
+import { SettingsModal, WorkspaceRail } from './ContextSwitcher';
 import { Glyph, type GlyphName } from './Glyph';
 import { ReaderPane } from './ReaderPane';
 import { UnifiedThreadList } from './UnifiedThreadList';
@@ -16,18 +16,19 @@ type MobilePane = 'list' | 'reader';
 export interface AppShellProps {
   onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
   onAddAccount?: () => void;
+  onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
 }
 
-export function AppShell({ onSend, onAddAccount }: AppShellProps = {}): ReactElement {
+export function AppShell({ onSend, onAddAccount, onMoveAccounts }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody onSend={onSend} onAddAccount={onAddAccount} />
+      <ShellBody onSend={onSend} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
+function ShellBody({ onSend, onAddAccount, onMoveAccounts }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -35,6 +36,7 @@ function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
   const onSelectThread = useThreadSelectionHandler();
   const { width } = useWindowDimensions();
   const [mobilePane, setMobilePane] = useState<MobilePane>('list');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const isMobile = width < theme.layout.mobileBreakpoint;
 
@@ -66,7 +68,13 @@ function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
           ) : (
             <>
               <View style={{ flex: 1 }}>
-                <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openComposer} fullScreen />
+                <UnifiedThreadList
+                  feed={feed}
+                  onSelectThread={handleSelect}
+                  onCompose={openComposer}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  fullScreen
+                />
               </View>
               <MobileNav active={snapshot.view.channel} onCompose={openComposer} />
             </>
@@ -74,13 +82,19 @@ function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
         </View>
         <SyncStatus />
         <CommandPalette />
+        <SettingsModal
+          visible={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onAddAccount={onAddAccount}
+          onMoveAccounts={onMoveAccounts}
+        />
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: theme.colors.canvas }}>
-      <WorkspaceRail onAddAccount={onAddAccount} />
+      <WorkspaceRail onAddAccount={onAddAccount} onOpenSettings={() => setSettingsOpen(true)} />
 
       <View
         style={{
@@ -99,6 +113,12 @@ function ShellBody({ onSend, onAddAccount }: AppShellProps): ReactElement {
 
       <SyncStatus />
       <CommandPalette />
+      <SettingsModal
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onAddAccount={onAddAccount}
+        onMoveAccounts={onMoveAccounts}
+      />
     </View>
   );
 }

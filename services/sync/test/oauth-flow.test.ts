@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';
 import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
+import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
 import { createAppServer, type AppServer } from '../src/server';
 
@@ -20,16 +21,38 @@ const config: SyncConfig = {
   redirectUri: 'http://localhost:8790/auth/google/callback',
   sessionSecret: 'session',
   encryptionKey: Buffer.alloc(32),
-  publicOrigins: ['http://localhost:8081', 'https://at-mail.vercel.app', 'http://tauri.localhost', 'tauri://localhost']
+  publicOrigins: ['http://localhost:8081', 'https://at-mail.vercel.app', 'http://tauri.localhost', 'tauri://localhost'],
+  webAppOrigin: 'https://at-mail.vercel.app'
 };
 
 /** Banco de mentira: só as quatro consultas que o fluxo de login realmente usa. */
-function createFakeDb(): { db: Db; rows: Map<string, PendingRow> } {
+function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<string, { userId: string; contextId: string }> } {
   const rows = new Map<string, PendingRow>();
+  const accounts = new Map<string, { userId: string; contextId: string }>();
 
   const db: Db = {
     pool: null as unknown as Pool,
     async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = []): Promise<{ rows: T[] }> {
+      if (text.startsWith('SELECT user_id, expires_at FROM atmail_sessions')) {
+        if (values[0] !== hashToken('test-session')) return { rows: [] };
+        return { rows: [{ user_id: 'user-1', expires_at: String(Date.now() + 60_000) } as unknown as T] };
+      }
+      if (text.startsWith('SELECT id FROM atmail_accounts WHERE id = ANY')) {
+        const [accountIds, userId] = values as [string[], string];
+        const owned = accountIds.filter((accountId) => accounts.get(accountId)?.userId === userId);
+        return { rows: owned.map((id) => ({ id } as unknown as T)) };
+      }
+      if (text.startsWith('UPDATE atmail_accounts SET context_id')) {
+        const [contextId, _updatedAt, accountIds, userId] = values as [string, number, string[], string];
+        const updated: T[] = [];
+        for (const accountId of accountIds) {
+          const account = accounts.get(accountId);
+          if (account?.userId !== userId) continue;
+          account.contextId = contextId;
+          updated.push({ id: accountId } as unknown as T);
+        }
+        return { rows: updated };
+      }
       if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE created_at <')) {
         const cutoff = Number(values[0]);
         for (const [state, row] of rows) if (row.createdAt < cutoff) rows.delete(state);
@@ -66,7 +89,7 @@ function createFakeDb(): { db: Db; rows: Map<string, PendingRow> } {
     close: async () => undefined
   };
 
-  return { db, rows };
+  return { db, rows, accounts };
 }
 
 interface ResponseSnapshot {
@@ -75,14 +98,30 @@ interface ResponseSnapshot {
   body: string;
 }
 
-async function call(app: AppServer, method: 'GET' | 'POST' | 'OPTIONS', path: string, ip: string, origin?: string): Promise<ResponseSnapshot> {
+async function call(
+  app: AppServer,
+  method: 'GET' | 'POST' | 'OPTIONS',
+  path: string,
+  ip: string,
+  origin?: string,
+  authorization?: string,
+  requestBody?: string
+): Promise<ResponseSnapshot> {
   return await new Promise<ResponseSnapshot>((resolve) => {
     let status = 0;
     let headers: Record<string, string> = {};
     const req = {
       method,
       url: path,
-      headers: { host: 'localhost:8790', 'x-forwarded-for': ip, ...(origin ? { origin } : {}) }
+      headers: {
+        host: 'localhost:8790',
+        'x-forwarded-for': ip,
+        ...(origin ? { origin } : {}),
+        ...(authorization ? { authorization } : {})
+      },
+      async *[Symbol.asyncIterator]() {
+        if (requestBody !== undefined) yield Buffer.from(requestBody);
+      }
     } as unknown as IncomingMessage;
     const res = {
       writeHead(nextStatus: number, nextHeaders: Record<string, string>) {
@@ -97,8 +136,8 @@ async function call(app: AppServer, method: 'GET' | 'POST' | 'OPTIONS', path: st
   });
 }
 
-async function startLogin(app: AppServer, ip: string): Promise<string> {
-  const response = await call(app, 'POST', '/auth/google/start', ip);
+async function startLogin(app: AppServer, ip: string, platform?: string): Promise<string> {
+  const response = await call(app, 'POST', `/auth/google/start${platform ? `?platform=${platform}` : ''}`, ip);
   assert.equal(response.status, 200);
   const { state } = JSON.parse(response.body) as { state: string };
   assert.equal(typeof state, 'string');
@@ -107,6 +146,35 @@ async function startLogin(app: AppServer, ip: string): Promise<string> {
 }
 
 describe('fluxo OAuth do backend', () => {
+  it('persiste o contexto apenas nas contas autenticadas e válidas', async () => {
+    const { db, accounts } = createFakeDb();
+    accounts.set('gmail-account', { userId: 'user-1', contextId: 'work' });
+    accounts.set('chat-account', { userId: 'user-1', contextId: 'work' });
+    accounts.set('other-user-account', { userId: 'user-2', contextId: 'work' });
+    const app = await createAppServer(config, db);
+    const payload = JSON.stringify({ accountIds: ['gmail-account'], contextId: 'studies' });
+
+    const unauthorized = await call(app, 'POST', '/accounts/context', '10.0.0.11', undefined, undefined, payload);
+    assert.equal(unauthorized.status, 401);
+
+    const updated = await call(app, 'POST', '/accounts/context', '10.0.0.12', undefined, 'Bearer test-session', payload);
+    assert.equal(updated.status, 200);
+    assert.deepEqual(JSON.parse(updated.body), { updated: 1 });
+    assert.equal(accounts.get('gmail-account')?.contextId, 'studies');
+
+    const mixedOwnership = await call(app, 'POST', '/accounts/context', '10.0.0.15', undefined, 'Bearer test-session', JSON.stringify({ accountIds: ['chat-account', 'other-user-account'], contextId: 'personal' }));
+    assert.equal(mixedOwnership.status, 404);
+    assert.equal(accounts.get('chat-account')?.contextId, 'work');
+
+    const forbidden = await call(app, 'POST', '/accounts/context', '10.0.0.13', undefined, 'Bearer test-session', JSON.stringify({ accountIds: ['other-user-account'], contextId: 'personal' }));
+    assert.equal(forbidden.status, 404);
+    assert.equal(accounts.get('other-user-account')?.contextId, 'work');
+
+    const invalidContext = await call(app, 'POST', '/accounts/context', '10.0.0.14', undefined, 'Bearer test-session', JSON.stringify({ accountIds: ['gmail-account'], contextId: 'all' }));
+    assert.equal(invalidContext.status, 400);
+    await app.close();
+  });
+
   it('permite preflight somente para origens configuradas', async () => {
     const { db } = createFakeDb();
     const app = await createAppServer(config, db);
@@ -150,7 +218,7 @@ describe('fluxo OAuth do backend', () => {
     const callback = await call(app, 'GET', `/auth/google/callback?code=CODE123&state=${state}`, ip);
     assert.equal(callback.status, 200);
     assert.equal(callback.headers['content-type'], 'text/html; charset=utf-8');
-    assert.match(callback.body, /voltar ao @mail/i);
+    assert.match(callback.body, /voltando ao @mail/i);
     assert.equal(callback.headers['cache-control'], 'no-store');
 
     const polled = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
@@ -158,6 +226,29 @@ describe('fluxo OAuth do backend', () => {
 
     const consumed = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
     assert.deepEqual(JSON.parse(consumed.body), { pending: true }, 'o code não pode ser devolvido duas vezes');
+    await app.close();
+  });
+
+  it('retorna ao site ou app mobile ao concluir OAuth', async () => {
+    const { db } = createFakeDb();
+    const app = await createAppServer(config, db);
+
+    const webState = await startLogin(app, '10.0.0.9', 'web');
+    const webCallback = await call(app, 'GET', `/auth/google/callback?code=WEB_CODE&state=${encodeURIComponent(webState)}`, '10.0.0.9');
+    assert.match(webCallback.body, /https:\/\/at-mail\.vercel\.app\//);
+
+    const androidState = await startLogin(app, '10.0.0.10', 'android');
+    const androidCallback = await call(app, 'GET', `/auth/google/callback?code=ANDROID_CODE&state=${encodeURIComponent(androidState)}`, '10.0.0.10');
+    assert.match(androidCallback.body, /atmail:\/\/auth\/google\/callback/);
+    assert.match(androidCallback.body, new RegExp(encodeURIComponent(androidState)));
+
+    const tauriState = await startLogin(app, '10.0.0.11', 'tauri');
+    const tauriCallback = await call(app, 'GET', `/auth/google/callback?code=TAURI_CODE&state=${encodeURIComponent(tauriState)}`, '10.0.0.11');
+    assert.match(tauriCallback.body, /https:\/\/at-mail\.vercel\.app\//);
+
+    const legacyMobileState = await startLogin(app, '10.0.0.12');
+    const legacyMobileCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_CODE&state=${encodeURIComponent(legacyMobileState)}`, '10.0.0.12');
+    assert.match(legacyMobileCallback.body, /atmail:\/\/auth\/google\/callback/);
     await app.close();
   });
 

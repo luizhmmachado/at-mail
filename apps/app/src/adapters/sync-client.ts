@@ -1,5 +1,5 @@
 import { brand } from '@mail/core';
-import type { ChatMessage, EmailMessage, MailMessage, MailboxAdapter, SendRequest, SyncPage } from '@mail/core';
+import type { AccountId, ChatMessage, ContextId, EmailMessage, MailMessage, MailboxAdapter, SendRequest, SyncPage } from '@mail/core';
 import { apiFetch } from '../auth';
 
 export interface SyncEnvelopeDto {
@@ -64,6 +64,15 @@ export async function sendEmail(accountId: string, request: SendRequest): Promis
     body: JSON.stringify({ accountId, ...request })
   });
   if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+}
+
+export async function updateAccountContexts(accountIds: readonly AccountId[], contextId: ContextId): Promise<void> {
+  const response = await apiFetch('/accounts/context', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountIds, contextId })
+  });
+  if (!response.ok) throw new Error(`Não foi possível salvar o contexto das contas (${response.status}).`);
 }
 
 /**
