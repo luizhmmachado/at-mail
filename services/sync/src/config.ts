@@ -15,6 +15,7 @@ export interface SyncConfig {
   sessionSecret: string;
   encryptionKey: Buffer;
   publicOrigins: string[];
+  webAppOrigin: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
@@ -35,7 +36,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
     publicOrigins: (env.PUBLIC_ORIGINS ?? env.PUBLIC_ORIGIN ?? 'http://localhost:8081')
       .split(',')
       .map((origin) => origin.trim())
-      .filter(Boolean)
+      .filter(Boolean),
+    webAppOrigin: env.WEB_APP_ORIGIN ?? 'http://localhost:8081'
   };
 }
 

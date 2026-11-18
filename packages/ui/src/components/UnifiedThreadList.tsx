@@ -21,6 +21,7 @@ export interface UnifiedThreadListProps {
   feed: FeedResult;
   onSelectThread: (threadId: ThreadId) => void;
   onCompose?: () => void;
+  onOpenSettings?: () => void;
   /** Em telas pequenas a lista ocupa a tela inteira. */
   fullScreen?: boolean;
 }
@@ -31,7 +32,7 @@ export interface UnifiedThreadListProps {
  * A ordem vertical é fixa: título (20/24) + chevron + escrever, busca de 34 px,
  * segmentado de 32 px e, dentro da lista, cabeçalhos de data com contagem.
  */
-export function UnifiedThreadList({ feed, onSelectThread, onCompose, fullScreen = false }: UnifiedThreadListProps): ReactElement {
+export function UnifiedThreadList({ feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false }: UnifiedThreadListProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
@@ -86,14 +87,26 @@ export function UnifiedThreadList({ feed, onSelectThread, onCompose, fullScreen 
           <View style={{ flex: 1 }} />
 
           {mobile ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Buscar em todas as contas"
-              onPress={() => actions.toggleCommandPalette(true)}
-              style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Glyph name="search" size={22} color={theme.colors.textPrimary} />
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[4] }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Buscar em todas as contas"
+                onPress={() => actions.toggleCommandPalette(true)}
+                style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Glyph name="search" size={22} color={theme.colors.textPrimary} />
+              </Pressable>
+              {onOpenSettings !== undefined && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Abrir configurações"
+                  onPress={onOpenSettings}
+                  style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Glyph name="settings" size={20} color={theme.colors.textPrimary} />
+                </Pressable>
+              )}
+            </View>
           ) : (
             <Pressable
               accessibilityRole="button"

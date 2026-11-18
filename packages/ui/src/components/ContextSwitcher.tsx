@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { contextAccent } from '@mail/core';
+import type { Account, AccountId, ContextId } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
@@ -13,11 +14,15 @@ import { Glyph } from './Glyph';
  * O rail não mostra contadores: no arquivo o estado de não lido fica nas linhas
  * e no cabeçalho da seção, não aqui.
  */
-export function WorkspaceRail({ onAddAccount }: { onAddAccount?: () => void } = {}): ReactElement {
+export interface WorkspaceRailProps {
+  onAddAccount?: () => void;
+  onOpenSettings?: () => void;
+}
+
+export function WorkspaceRail({ onAddAccount, onOpenSettings }: WorkspaceRailProps = {}): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <View
@@ -64,8 +69,8 @@ export function WorkspaceRail({ onAddAccount }: { onAddAccount?: () => void } = 
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Alternar tema"
-        onPress={() => actions.setThemeMode(snapshot.ui.themeMode === 'light' ? 'dark' : 'light')}
+        accessibilityLabel="Abrir configurações"
+        onPress={onOpenSettings}
         style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
       >
         <Glyph name="settings" size={18} color={theme.colors.textSecondary} />
@@ -75,61 +80,180 @@ export function WorkspaceRail({ onAddAccount }: { onAddAccount?: () => void } = 
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Abrir perfil e configurações"
-        onPress={() => setSettingsOpen(true)}
+        accessibilityLabel="Adicionar conta Google"
+        onPress={onAddAccount}
         style={{ padding: theme.space[1] }}
       >
-        <Glyph name="user" size={18} color={theme.colors.textSecondary} />
+        <Glyph name="plus" size={18} color={theme.colors.textSecondary} />
       </Pressable>
+    </View>
+  );
+}
 
-      <Modal visible={settingsOpen} transparent animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
-        <Pressable
-          accessibilityLabel="Fechar configurações"
-          onPress={() => setSettingsOpen(false)}
-          style={{ flex: 1, justifyContent: 'flex-end', alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.18)' }}
+export interface SettingsModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onAddAccount?: () => void;
+  onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
+}
+
+interface AccountGroup {
+  key: string;
+  accountIds: AccountId[];
+  displayName: string;
+  email: string;
+  channels: string[];
+  contextId?: ContextId;
+}
+
+export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }: SettingsModalProps): ReactElement {
+  const theme = useTheme();
+  const snapshot = useMailSnapshot();
+  const actions = useMailActions();
+  const { width } = useWindowDimensions();
+  const [savingGroup, setSavingGroup] = useState<string>();
+  const [error, setError] = useState<string>();
+  const groups = groupAccounts(snapshot.accounts);
+
+  async function moveGroup(group: AccountGroup, contextId: ContextId): Promise<void> {
+    if (onMoveAccounts === undefined || group.contextId === contextId) return;
+    setSavingGroup(group.key);
+    setError(undefined);
+    try {
+      await onMoveAccounts(group.accountIds, contextId);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Não foi possível salvar o contexto da conta.');
+    } finally {
+      setSavingGroup(undefined);
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.space[4], backgroundColor: 'rgba(0,0,0,0.32)' }}>
+        <Pressable accessibilityLabel="Fechar configurações" onPress={onClose} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        <View
+          style={{
+            width: Math.min(width - theme.space[8], 520),
+            maxHeight: '88%',
+            overflow: 'hidden',
+            borderRadius: theme.radius.xxl,
+            backgroundColor: theme.colors.surface,
+            shadowColor: theme.colors.shadow,
+            shadowOpacity: 0.2,
+            shadowRadius: 18,
+            shadowOffset: { width: 0, height: 8 }
+          }}
         >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={{
-              width: 340,
-              margin: theme.space[5],
-              padding: theme.space[5],
-              borderRadius: theme.radius.xxl,
-              backgroundColor: theme.colors.surface,
-              shadowColor: theme.colors.shadow,
-              shadowOpacity: 0.2,
-              shadowRadius: 18,
-              shadowOffset: { width: 0, height: 8 }
-            }}
-          >
-            <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Configurações</Text>
-            <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
-              {snapshot.accounts.length} {snapshot.accounts.length === 1 ? 'conta conectada' : 'contas conectadas'}
-            </Text>
-            <View style={{ gap: theme.space[2], marginTop: theme.space[4] }}>
-              {snapshot.accounts.map((account) => (
-                <View key={account.id} style={{ padding: theme.space[3], borderRadius: theme.radius.lg, backgroundColor: theme.colors.surfaceSunken }}>
-                  <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>{account.displayName}</Text>
-                  <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>{account.email} · {account.channel === 'chat' ? 'Chat' : 'E-mail'}</Text>
-                </View>
-              ))}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space[5], paddingTop: theme.space[5] }}>
+            <Text style={{ ...typeStyle(theme, 'inboxTitle'), color: theme.colors.textPrimary }}>Configurações</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Fechar configurações" onPress={onClose}>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Fechar</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: theme.space[5], paddingTop: theme.space[4] }}>
+            <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>TEMA DA PÁGINA</Text>
+            <View style={{ flexDirection: 'row', gap: theme.space[2], marginTop: theme.space[2] }}>
+              <ThemeOption label="Claro" selected={snapshot.ui.themeMode === 'light'} onPress={() => actions.setThemeMode('light')} />
+              <ThemeOption label="Escuro" selected={snapshot.ui.themeMode === 'dark'} onPress={() => actions.setThemeMode('dark')} />
             </View>
+
+            <View style={{ marginTop: theme.space[6], marginBottom: theme.space[2] }}>
+              <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>CONTAS CONECTADAS</Text>
+            </View>
+            {groups.length === 0 ? (
+              <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, paddingVertical: theme.space[4] }}>
+                Nenhuma conta conectada.
+              </Text>
+            ) : groups.map((group) => (
+              <View key={group.key} style={{ paddingVertical: theme.space[3], borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.borderSubtle }}>
+                <Text numberOfLines={1} style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>{group.displayName}</Text>
+                <Text numberOfLines={1} style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary, marginTop: theme.space[1] }}>
+                  {group.email} · {group.channels.join(' + ')}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: theme.space[1], marginTop: theme.space[3] }}>
+                  {snapshot.contexts.map((context) => {
+                    const selected = group.contextId === context.id;
+                    return (
+                      <Pressable
+                        key={context.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Definir ${group.email} como ${context.name}`}
+                        accessibilityState={{ selected, disabled: savingGroup !== undefined || onMoveAccounts === undefined }}
+                        disabled={savingGroup !== undefined || onMoveAccounts === undefined || selected}
+                        onPress={() => void moveGroup(group, context.id)}
+                        style={{ flex: 1, minHeight: 34, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.lg, backgroundColor: selected ? theme.colors.accentMuted : theme.colors.surfaceSunken }}
+                      >
+                        <Text numberOfLines={1} style={{ ...typeStyle(theme, 'segment', selected ? 'medium' : 'regular'), color: selected ? theme.colors.accent : theme.colors.textSecondary }}>
+                          {context.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+            {error !== undefined && (
+              <Text accessibilityRole="alert" style={{ ...typeStyle(theme, 'body'), color: theme.colors.danger, marginTop: theme.space[3] }}>
+                {error}
+              </Text>
+            )}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Adicionar conta Google"
+              disabled={onAddAccount === undefined}
               onPress={() => {
-                setSettingsOpen(false);
+                onClose();
                 onAddAccount?.();
               }}
-              style={{ marginTop: theme.space[4], padding: theme.space[3], borderRadius: theme.radius.lg, backgroundColor: theme.colors.accent, alignItems: 'center' }}
+              style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: theme.space[2], marginTop: theme.space[5], borderRadius: theme.radius.lg, backgroundColor: theme.colors.accent }}
             >
+              <Glyph name="plus" size={16} color={theme.colors.surface} />
               <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>Adicionar conta Google</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
+}
+
+function ThemeOption({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={{ flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.lg, backgroundColor: selected ? theme.colors.accentMuted : theme.colors.surfaceSunken }}
+    >
+      <Text style={{ ...typeStyle(theme, 'button', selected ? 'medium' : 'regular'), color: selected ? theme.colors.accent : theme.colors.textSecondary }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function groupAccounts(accounts: readonly Account[]): AccountGroup[] {
+  const groups = new Map<string, Account[]>();
+  for (const account of accounts) {
+    const providerGroup = account.provider === 'gmail' || account.provider === 'google-chat' ? 'google' : account.provider;
+    const key = `${providerGroup}:${account.email.toLowerCase()}`;
+    const group = groups.get(key) ?? [];
+    group.push(account);
+    groups.set(key, group);
+  }
+  return Array.from(groups, ([key, group]) => {
+    const contextIds = Array.from(new Set(group.map((account) => account.contextId)));
+    const displayAccount = group.find((account) => account.channel === 'email') ?? group[0];
+    return {
+      key,
+      accountIds: group.map((account) => account.id),
+      displayName: displayAccount?.displayName ?? group[0]?.email ?? '',
+      email: group[0]?.email ?? '',
+      channels: Array.from(new Set(group.map((account) => account.channel === 'chat' ? 'Chat' : 'E-mail'))),
+      contextId: contextIds.length === 1 ? contextIds[0] : undefined
+    };
+  });
 }
 
 interface ContextTileProps {
