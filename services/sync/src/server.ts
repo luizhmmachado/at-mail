@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { SyncConfig } from './config';
-import { encrypt, hashToken, opaqueToken } from './crypto';
-import { openDb, type Db } from './db';
-import { exchangeCode, getUser } from './google';
-import { body, cors, json } from './http';
-import { fetchChat, fetchGmail } from './providers';
-import { readVault, writeVault } from './vault';
+import type { SyncConfig } from './config.js';
+import { encrypt, hashToken, opaqueToken } from './crypto.js';
+import { openDb, type Db } from './db.js';
+import { exchangeCode, getUser } from './google.js';
+import { body, cors, json } from './http.js';
+import { fetchChat, fetchGmail } from './providers.js';
+import { readVault, writeVault } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
 

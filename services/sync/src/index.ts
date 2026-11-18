@@ -1,7 +1,7 @@
 import process from 'node:process';
 import { createServer } from 'node:http';
-import { loadConfig } from './config';
-import { createAppServer } from './server';
+import { loadConfig } from './config.js';
+import { createAppServer } from './server.js';
 
 const config = loadConfig();
 const app = await createAppServer(config);

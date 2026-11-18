@@ -1,10 +1,10 @@
 type MailMessage = any;
 type MessageId = string;
 const brand = { message: (value: string) => value, account: (value: string) => value, context: (value: string) => value, space: (value: string) => value };
-import type { Db } from './db';
-import { decrypt } from './crypto';
-import { refreshAccessToken } from './google';
-import type { SyncConfig } from './config';
+import type { Db } from './db.js';
+import { decrypt } from './crypto.js';
+import { refreshAccessToken } from './google.js';
+import type { SyncConfig } from './config.js';
 
 interface Credential { encrypted_refresh_token: string; email: string }
 
