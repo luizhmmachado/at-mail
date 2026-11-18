@@ -180,8 +180,8 @@ async function call(
   });
 }
 
-async function startLogin(app: AppServer, ip: string, platform?: string): Promise<string> {
-  const response = await call(app, 'POST', `/auth/google/start${platform ? `?platform=${platform}` : ''}`, ip);
+async function startLogin(app: AppServer, ip: string, platform?: string, origin?: string): Promise<string> {
+  const response = await call(app, 'POST', `/auth/google/start${platform ? `?platform=${platform}` : ''}`, ip, origin);
   assert.equal(response.status, 200);
   const { state } = JSON.parse(response.body) as { state: string };
   assert.equal(typeof state, 'string');
@@ -290,8 +290,12 @@ describe('fluxo OAuth do backend', () => {
     const tauriCallback = await call(app, 'GET', `/auth/google/callback?code=TAURI_CODE&state=${encodeURIComponent(tauriState)}`, '10.0.0.11');
     assert.match(tauriCallback.body, /https:\/\/at-mail\.vercel\.app\//);
 
-    const legacyMobileState = await startLogin(app, '10.0.0.12');
-    const legacyMobileCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_CODE&state=${encodeURIComponent(legacyMobileState)}`, '10.0.0.12');
+    const legacyWebState = await startLogin(app, '10.0.0.13', 'web', 'https://at-mail-web.vercel.app');
+    const legacyWebCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_WEB_CODE&state=${encodeURIComponent(legacyWebState)}`, '10.0.0.13');
+    assert.match(legacyWebCallback.body, /https:\/\/at-mail-web\.vercel\.app\//);
+
+    const legacyMobileState = await startLogin(app, '10.0.0.14');
+    const legacyMobileCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_CODE&state=${encodeURIComponent(legacyMobileState)}`, '10.0.0.14');
     assert.match(legacyMobileCallback.body, /atmail:\/\/auth\/google\/callback/);
     await app.close();
   });
