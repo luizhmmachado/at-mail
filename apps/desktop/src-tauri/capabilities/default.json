@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissões mínimas do @mail desktop",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-title"]
+  "permissions": ["core:default", "core:window:allow-set-title", "opener:default"]
 }
