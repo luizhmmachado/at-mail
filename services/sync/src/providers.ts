@@ -163,31 +163,43 @@ function header(headers: Array<{ name: string; value: string }> | undefined, nam
   return headers?.find((item) => item.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 }
 
-function bodyFromPayload(payload: any): string {
-  const plainPart = (payload?.parts ?? []).find((part: any) => part?.mimeType === 'text/plain');
-  if (plainPart) {
-    const text = bodyFromPayload(plainPart);
-    if (text) return text;
+function findBodyPart(payload: any, mimeType: string): string | undefined {
+  if (!payload || payload.filename) return undefined;
+  const disposition = payload.headers?.find((item: any) => item?.name?.toLowerCase() === 'content-disposition')?.value;
+  if (typeof disposition === 'string' && /^attachment\b/i.test(disposition)) return undefined;
+  if (payload.mimeType?.toLowerCase() === mimeType && payload.body?.data) return decodeBase64Url(payload.body.data);
+  for (const part of payload.parts ?? []) {
+    const body = findBodyPart(part, mimeType);
+    if (body !== undefined) return body;
   }
-  if (payload?.body?.data) {
-    const decoded = decodeBase64Url(payload.body.data);
-    return payload.mimeType === 'text/html' ? htmlToText(decoded) : decoded;
-  }
-  for (const part of payload?.parts ?? []) {
-    const text = bodyFromPayload(part);
-    if (text) return text;
-  }
-  return '';
+  return undefined;
+}
+
+export function extractGmailBodies(payload: any): { bodyText: string; bodyHtml?: string } {
+  const bodyHtml = findBodyPart(payload, 'text/html');
+  const plainText = findBodyPart(payload, 'text/plain');
+  const bodyText = plainText || (bodyHtml ? htmlToText(bodyHtml) : '');
+  return bodyHtml === undefined ? { bodyText } : { bodyText, bodyHtml };
 }
 
 function htmlToText(value: string): string {
   return value
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style|head|title|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis, '$2 ($1)')
-    .replace(/<br\s*\/?>(\s*)/gi, '\n')
+    .replace(/<(br|hr)\b[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])\s*>/gi, '\n')
     .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code: string) => decodeCodePoint(Number(code)))
+    .replace(/&#x([\da-f]+);/gi, (_, code: string) => decodeCodePoint(Number.parseInt(code, 16)))
+    .replace(/[\t ]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function decodeCodePoint(value: number): string {
+  return value <= 0x10ffff ? String.fromCodePoint(value) : '\uFFFD';
 }
 
 export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor?: string; removedIds: MessageId[] }> {
@@ -204,7 +216,8 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     const date = Date.parse(header(headers, 'Date')) || Date.now();
     const labels: string[] = message.labelIds ?? [];
     const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
-    messages.push({ id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email', participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', bodyText: bodyFromPayload(payload), receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] });
+    const bodies = extractGmailBodies(payload);
+    messages.push({ id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email', participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] });
   }
   return { messages, cursor: list.nextPageToken, removedIds: [] };
 }

@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactElement } from 'react';
-import { Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { createElement, useMemo, useState, type ReactElement } from 'react';
+import { Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
   isChatMessage,
@@ -456,6 +456,22 @@ function MessageBody({
   color: string;
 }): ReactElement {
   const theme = useTheme();
+  if (Platform.OS === 'web' && message.channel === 'email' && message.bodyHtml) {
+    return createElement('iframe', {
+      title: `Corpo do e-mail: ${message.subject}`,
+      sandbox: '',
+      referrerPolicy: 'no-referrer',
+      srcDoc: emailDocument(message.bodyHtml),
+      style: {
+        display: 'block',
+        width: '100%',
+        height: role === 'readerBody' ? 560 : 260,
+        marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0,
+        border: 0,
+        backgroundColor: '#FFFFFF'
+      }
+    });
+  }
   const parts = message.bodyText.split(URL_PATTERN);
   return (
     <Text style={{ ...typeStyle(theme, role), color, ...(role === 'readerBody' ? { marginTop: theme.space[2] + 2 } : {}) }}>
@@ -477,6 +493,15 @@ function MessageBody({
       })}
     </Text>
   );
+}
+
+function emailDocument(bodyHtml: string): string {
+  const headContent = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\' https:; font-src https: data:; base-uri \'none\'; form-action \'none\'"><style>html,body{margin:0;max-width:100%}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>';
+  const headOpen = /<head\b[^>]*>/i;
+  if (headOpen.test(bodyHtml)) return bodyHtml.replace(headOpen, (head) => `${head}${headContent}`);
+  const htmlOpen = /<html\b[^>]*>/i;
+  if (htmlOpen.test(bodyHtml)) return bodyHtml.replace(htmlOpen, (html) => `${html}<head>${headContent}</head>`);
+  return `<!doctype html><html><head>${headContent}</head><body>${bodyHtml}</body></html>`;
 }
 
 function AttachmentCard({ attachment }: { attachment: Attachment }): ReactElement {

@@ -5,7 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { createGmailRawMessage } from '../src/providers';
+import { createGmailRawMessage, extractGmailBodies } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -27,6 +27,30 @@ const config: SyncConfig = {
 };
 
 describe('montagem MIME do e-mail', () => {
+  it('preserva o HTML original e não expõe CSS no texto de fallback', () => {
+    const bodyHtml = '<html><head><style>.promo{color:red}</style></head><body><table><tr><td>Oferta</td></tr></table></body></html>';
+    const payload = {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: Buffer.from('Oferta para você').toString('base64url') } },
+        { mimeType: 'text/html', body: { data: Buffer.from(bodyHtml).toString('base64url') } }
+      ]
+    };
+
+    const bodies = extractGmailBodies(payload);
+
+    assert.equal(bodies.bodyHtml, bodyHtml);
+    assert.equal(bodies.bodyText, 'Oferta para você');
+  });
+
+  it('remove style e head do fallback quando o e-mail só tem HTML', () => {
+    const bodyHtml = '<html><head><style>.promo{color:red}</style></head><body><p>Oferta&nbsp;especial</p></body></html>';
+    const bodies = extractGmailBodies({ mimeType: 'text/html', body: { data: Buffer.from(bodyHtml).toString('base64url') } });
+
+    assert.equal(bodies.bodyHtml, bodyHtml);
+    assert.equal(bodies.bodyText, 'Oferta especial');
+  });
+
   it('inclui corpo UTF-8 e arquivos anexados em multipart/mixed', () => {
     const raw = createGmailRawMessage({
       to: ['destino@example.com'],
