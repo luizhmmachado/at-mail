@@ -1,4 +1,6 @@
-import { brand, type MailMessage, type MessageId } from '@mail/core';
+type MailMessage = any;
+type MessageId = string;
+const brand = { message: (value: string) => value, account: (value: string) => value, context: (value: string) => value, space: (value: string) => value };
 import type { Db } from './db';
 import { decrypt } from './crypto';
 import { refreshAccessToken } from './google';
