@@ -331,6 +331,10 @@ export function createAppStore(options: AppStoreOptions = {}) {
       });
     },
 
+    replaceAccounts(accounts: readonly Account[]): void {
+      patch({ accounts: accounts.slice() });
+    },
+
     removeAccount(accountId: AccountId): void {
       patch({
         accounts: snapshot.accounts.filter((account) => account.id !== accountId),

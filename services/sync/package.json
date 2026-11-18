@@ -1,0 +1,10 @@
+{
+  "name": "@mail/sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-sqlite --env-file-if-exists=.env --import tsx src/index.ts",
+    "test": "node --experimental-sqlite --import tsx --test test/*.test.ts"
+  }
+}

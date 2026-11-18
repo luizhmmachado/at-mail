@@ -1,0 +1,21 @@
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+
+export function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
+  res.end(JSON.stringify(body));
+}
+
+export async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  if (chunks.length === 0) return {};
+  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('JSON body inválido');
+  return parsed as Record<string, unknown>;
+}
+
+export function cors(origin: string): Record<string, string> {
+  return { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
+}
+
+export { createServer };

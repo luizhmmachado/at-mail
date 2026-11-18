@@ -8,6 +8,8 @@ const fallbackHost = Platform.select({
 /** Backend de sincronização (guarda refresh tokens; o cliente nunca os vê). */
 export const SYNC_API_URL = process.env.EXPO_PUBLIC_SYNC_API_URL ?? fallbackHost;
 
+export const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
+
 export const DEMO_MODE = process.env.EXPO_PUBLIC_SYNC_API_URL === undefined;
 
 /**

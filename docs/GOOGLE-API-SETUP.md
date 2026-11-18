@@ -16,9 +16,8 @@ lugares** e cada passo pertence a um deles:
 | ☁️ **Cloud Shell** | botão `>_` no topo do Console — abre um terminal **já autenticado** no projeto | rodar comandos `gcloud` (Pub/Sub, permissões) sem instalar nada |
 | 🖥️ **Seu terminal** | o terminal do seu Ubuntu, na pasta `~/at-mail` | instalar dependências, rodar o app, gerar SHA-1, testar com `curl` |
 
-> Ainda **não existe um servidor** de sincronização neste repositório. Enquanto ele não existir,
-> o app roda em **modo demo**. O passo 4 explica exatamente onde cada valor vai e o passo 5
-> mostra como reconhecer os dois modos. Ver também a seção [9](#9-o-que-ainda-não-existe-e-por-quê).
+> O servidor de sincronização está em `services/sync`. Enquanto ele não estiver configurado e
+> rodando, o app permanece em **modo demo**.
 
 ### De onde vem cada valor (resumo)
 
@@ -26,7 +25,7 @@ lugares** e cada passo pertence a um deles:
 | --- | --- | --- |
 | `GOOGLE_OAUTH_CLIENT_ID` | Console → **Google Auth Platform → Clientes** (criado no passo 3, aparece no modal “Cliente OAuth criado”) | `.env` na raiz de `~/at-mail` |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | mesmo lugar — campo **Segredo do cliente** / botão **Baixar JSON** | `.env` na raiz de `~/at-mail` |
-| `EXPO_PUBLIC_SYNC_API_URL` | **não vem do Google.** É a URL do *seu* serviço de sincronização, que ainda não existe | `.env` na raiz (deixe comentado = modo demo) |
+| `EXPO_PUBLIC_SYNC_API_URL` | **não vem do Google.** É a URL do serviço em `services/sync` | `.env` na raiz (deixe comentado = modo demo) |
 
 Comandos `gcloud` abaixo podem rodar **no Cloud Shell** (recomendado) ou no seu terminal se você
 instalar o CLI (`sudo snap install google-cloud-cli --classic`, depois `gcloud auth login`).
@@ -260,12 +259,11 @@ Existem **dois** lugares, e confundir os dois é o que faz o app “não conecta
 ### 4.3 `EXPO_PUBLIC_SYNC_API_URL`
 
 **Este valor não existe no Console do Google.** Ele é a URL do *seu* serviço de sincronização —
-o programa que recebe `/sync/gmail` e `/sync/google-chat` (seção 9). Você só tem um valor para
-colocar aqui depois de subir esse serviço. Três estados possíveis:
+o programa que recebe `/sync/gmail` e `/sync/google-chat` (seção 9). Três estados possíveis:
 
 | Situação | Valor no `.env` | O que acontece no app |
 | --- | --- | --- |
-| Serviço ainda não existe (hoje) | `# EXPO_PUBLIC_SYNC_API_URL=...` comentado, ou linha ausente | modo demo, dados de exemplo, nenhuma chamada de rede |
+| Serviço não configurado | `# EXPO_PUBLIC_SYNC_API_URL=...` comentado, ou linha ausente | modo demo, dados de exemplo, nenhuma chamada de rede |
 | Serviço rodando na sua máquina | `EXPO_PUBLIC_SYNC_API_URL=http://localhost:8790` | o app chama o serviço local; precisa reiniciar o `npm run web` |
 | Serviço publicado | `EXPO_PUBLIC_SYNC_API_URL=https://sync.seudominio.app` | produção; `https` obrigatório fora de localhost |
 
@@ -427,12 +425,21 @@ No Google Chat: configure o app em
 
 ---
 
-## 9. O que ainda não existe (e por quê)
+## 9. Como iniciar o serviço local
 
-O repositório tem **cliente**, não servidor. Por isso o botão “conectar conta” ainda não aparece
-na interface: falta o serviço que faz a troca de código por token e chama o Google.
+O repositório agora inclui o cliente e o serviço de sync. Para iniciar o serviço:
 
-O contrato já está pronto em `apps/app/src/adapters/sync-client.ts`:
+```bash
+cp services/sync/.env.example services/sync/.env
+openssl rand -base64 32  # use o resultado em SESSION_SECRET e TOKEN_ENCRYPTION_KEY
+npm run sync
+```
+
+Depois configure `EXPO_PUBLIC_SYNC_API_URL=http://localhost:8790` e
+`EXPO_PUBLIC_GOOGLE_CLIENT_ID=<client-id-web>` no ambiente do app. O botão “Continuar com
+Google” usa PKCE e troca o código no backend; o segredo OAuth nunca vai para o bundle.
+
+O contrato está implementado em `apps/app/src/adapters/sync-client.ts` e `services/sync`:
 
 ```
 POST /sync/gmail          { accountId, cursor?, limit? }
@@ -441,16 +448,10 @@ POST /sync/google-chat    { accountId, cursor?, limit? }
 → 401 { error: "reauth_required" }
 ```
 
-O que esse serviço precisa fazer, na ordem:
-
-1. `GET /auth/google/start` → monta a URL de consentimento com PKCE e `state`.
-2. `GET /auth/google/callback` → troca `code` por `access_token` + `refresh_token`, guarda o
-   refresh **cifrado** e emite um cookie `HttpOnly` de sessão.
-3. `POST /sync/gmail` → `users.getProfile` → `messages.list` → `messages.get` → traduz para
-   `RawMessageDto` → devolve `cursor = historyId`.
-4. `POST /sync/google-chat` → `spaces.list` + `spaces.messages.list` → mesmo DTO.
-
-Enquanto isso não é implementado, a única forma de validar credenciais é a seção 6.
+O app monta a URL Google com PKCE e `state`; o backend troca o código em
+`POST /auth/google/exchange`, guarda o refresh **cifrado** e emite a sessão. Depois,
+`POST /sync/gmail` usa `messages.list` + `messages.get`, e `POST /sync/google-chat` usa
+`spaces.list` + `spaces.messages.list`, traduzindo ambos para o DTO do cliente.
 
 ---
 

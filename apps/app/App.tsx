@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Linking, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
   Inter_400Regular,
@@ -11,8 +11,13 @@ import { AppShell, MailStoreProvider } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
+import { GOOGLE_CLIENT_ID } from './src/config';
+import { fetchAccounts, finishGoogleLogin, sessionToken } from './src/auth';
+import { SignInScreen } from './src/SignInScreen';
 
 export default function App() {
+  const [authenticated, setAuthenticated] = useState(DEMO_MODE);
+  const [authError, setAuthError] = useState<string>();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -21,8 +26,18 @@ export default function App() {
 
   useEffect(() => {
     if (DEMO_MODE) return;
-    void syncEngine.syncAll();
+    void sessionToken().then((token) => setAuthenticated(token !== null));
+    const complete = () => finishGoogleLogin(globalThis.location?.href ?? '').then(async (done) => { if (done) { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); } }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
+    const listener = ({ url }: { url: string }) => void finishGoogleLogin(url).then(async () => { const accounts = await fetchAccounts(); store.actions.replaceAccounts(accounts); setAuthenticated(true); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
+    const subscription = Linking.addEventListener('url', listener);
+    if (Platform.OS === 'web' && globalThis.location?.pathname.endsWith('/auth/google/callback')) void complete();
+    return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    if (DEMO_MODE || !authenticated) return;
+    void syncEngine.syncAll();
+  }, [authenticated]);
 
   useEffect(() => {
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
@@ -33,6 +48,8 @@ export default function App() {
   if (!fontsLoaded && fontError === null) {
     return <View style={styles.root} />;
   }
+
+  if (!DEMO_MODE && (!GOOGLE_CLIENT_ID || !authenticated)) return <SignInScreen error={authError} />;
 
   return (
     <View style={styles.root}>

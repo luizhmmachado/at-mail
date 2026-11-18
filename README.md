@@ -47,10 +47,9 @@ O projeto Google Cloud já existe: **`at-mail-515112`**. O passo a passo complet
 no navegador, no Cloud Shell e no seu terminal, com os links diretos — está em
 [docs/GOOGLE-API-SETUP.md](./docs/GOOGLE-API-SETUP.md).
 
-> **Importante:** este repositório entrega o *cliente*. O serviço de sincronização
-> (`/auth/google/*` + `/sync/*`), que troca o código por token e chama o Gmail/Chat, ainda não
-> existe. Sem `EXPO_PUBLIC_SYNC_API_URL` o app roda em modo demo, com dados locais.
-> O contrato do serviço está descrito na seção 9 do guia.
+> **Importante:** o serviço de sincronização agora está em `services/sync`. Sem
+> `EXPO_PUBLIC_SYNC_API_URL` o app roda em modo demo, com dados locais. Para ativá-lo, copie
+> `services/sync/.env.example`, gere uma chave de 32 bytes e rode `npm run sync`.
 
 Desktop:
 
@@ -134,6 +133,7 @@ No mobile: lista → leitor com "voltar" no topo; contextos em pills horizontais
 | `npm run tokens:sync` | Figma → `figma.tokens.json` |
 | `npm test` | testes do `core` (node:test via tsx) |
 | `npm run typecheck` | `tsc -b` no monorepo |
+| `npm run sync` | servidor local OAuth/vault/Gmail/Chat em `:8790` |
 
 ## Segurança
 

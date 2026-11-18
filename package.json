@@ -5,7 +5,8 @@
   "description": "@mail — launcher unificado de e-mail e Google Chat",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "services/*"
   ],
   "scripts": {
     "tokens:sync": "node scripts/figma-sync-tokens.mjs",
@@ -14,7 +15,8 @@
     "web": "npm --workspace apps/app run web",
     "ios": "npm --workspace apps/app run ios",
     "android": "npm --workspace apps/app run android",
-    "desktop": "npm --workspace apps/desktop run dev"
+    "desktop": "npm --workspace apps/desktop run dev",
+    "sync": "node --experimental-sqlite --env-file-if-exists=services/sync/.env --import tsx services/sync/src/index.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

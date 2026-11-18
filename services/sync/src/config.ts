@@ -1,0 +1,41 @@
+import process from 'node:process';
+
+function required(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Variável obrigatória ausente: ${name}`);
+  return value;
+}
+
+export interface SyncConfig {
+  port: number;
+  databasePath: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  sessionSecret: string;
+  encryptionKey: Buffer;
+  publicOrigin: string;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
+  const encryption = env.TOKEN_ENCRYPTION_KEY?.trim() || env.SESSION_SECRET?.trim();
+  if (!encryption) throw new Error('Defina TOKEN_ENCRYPTION_KEY (32 bytes em base64)');
+  const encryptionKey = Buffer.from(encryption, 'base64');
+  if (encryptionKey.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY deve decodificar para 32 bytes');
+  return {
+    port: Number(env.PORT ?? 8790),
+    databasePath: env.DATABASE_PATH ?? './data/at-mail.db',
+    clientId: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_ID'),
+    clientSecret: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_SECRET'),
+    redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI ?? 'http://localhost:8081/auth/google/callback',
+    sessionSecret: requiredFrom(env, 'SESSION_SECRET', false) || encryption,
+    encryptionKey,
+    publicOrigin: env.PUBLIC_ORIGIN ?? 'http://localhost:8081'
+  };
+}
+
+function requiredFrom(env: NodeJS.ProcessEnv, name: string, must = true): string {
+  const value = env[name]?.trim() ?? '';
+  if (must && !value) throw new Error(`Variável obrigatória ausente: ${name}`);
+  return value;
+}
