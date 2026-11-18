@@ -98,17 +98,17 @@ export default function App() {
     void (async () => {
       try {
         if ((await sessionToken()) !== null) {
-          setShowWebApp(true);
           await activateSession();
+          setShowWebApp(true);
           return;
         }
         // Um login iniciado antes de o app ser fechado pode já ter sido concluído no navegador.
         const pending = await pendingLoginState();
         if (pending !== null) {
-          setShowWebApp(true);
           try {
             await awaitGoogleLogin(pending, { timeoutMs: 8000 });
             await activateSession();
+            setShowWebApp(true);
             return;
           } catch {
             // Sem code pendente: segue para a tela de login.
