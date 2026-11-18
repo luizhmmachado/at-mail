@@ -1,4 +1,9 @@
 {
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true
+  },
   "files": [],
   "references": [{ "path": "./packages/core" }, { "path": "./packages/ui" }, { "path": "./services/sync" }]
 }
