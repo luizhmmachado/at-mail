@@ -22,12 +22,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
   if (!encryption) throw new Error('Defina TOKEN_ENCRYPTION_KEY (32 bytes em base64)');
   const encryptionKey = Buffer.from(encryption, 'base64');
   if (encryptionKey.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY deve decodificar para 32 bytes');
+  const port = Number(env.PORT ?? 8790);
   return {
-    port: Number(env.PORT ?? 8790),
+    port,
     databaseUrl: requiredFrom(env, 'DATABASE_URL'),
     clientId: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_ID'),
     clientSecret: requiredFrom(env, 'GOOGLE_OAUTH_CLIENT_SECRET'),
-    redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI ?? 'http://localhost:8081/auth/google/callback',
+    // O callback é servido por este backend: web, APK e desktop usam o mesmo HTTPS.
+    redirectUri: env.GOOGLE_OAUTH_REDIRECT_URI ?? `http://localhost:${port}/auth/google/callback`,
     sessionSecret: requiredFrom(env, 'SESSION_SECRET', false) || encryption,
     encryptionKey,
     publicOrigin: env.PUBLIC_ORIGIN ?? 'http://localhost:8081'

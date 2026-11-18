@@ -16,6 +16,7 @@ export async function openDb(connectionString: string): Promise<Db> {
     CREATE TABLE IF NOT EXISTS atmail_accounts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, provider TEXT NOT NULL, channel TEXT NOT NULL, email TEXT NOT NULL, display_name TEXT NOT NULL, context_id TEXT NOT NULL, updated_at BIGINT NOT NULL);
     CREATE TABLE IF NOT EXISTS atmail_vault_records (user_id TEXT NOT NULL, kind TEXT NOT NULL, record_id TEXT NOT NULL, revision BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted BOOLEAN NOT NULL DEFAULT FALSE, payload JSONB NOT NULL, PRIMARY KEY (user_id, kind, record_id));
     CREATE TABLE IF NOT EXISTS atmail_vault_meta (user_id TEXT PRIMARY KEY, revision BIGINT NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS atmail_oauth_pending (state TEXT PRIMARY KEY, code TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', created_at BIGINT NOT NULL);
   `);
   return {
     pool,
