@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Linking, Platform, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
   Inter_400Regular,
@@ -9,17 +9,28 @@ import {
 } from '@expo-google-fonts/inter';
 import { AppShell, MailStoreProvider } from '@mail/ui';
 import { store, syncEngine } from './src/store';
-import { DEMO_MODE } from './src/config';
+import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
-import { GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
-import { beginGoogleLogin, fetchAccounts, finishGoogleLogin, sessionToken } from './src/auth';
+import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, pendingLoginState, sessionToken } from './src/auth';
+import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
 import { sendEmail } from './src/adapters/sync-client';
 import type { UnifiedThread } from '@mail/core';
 
+function messageOf(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState(DEMO_MODE);
   const [authError, setAuthError] = useState<string>();
+
+  const activateSession = useCallback(async (): Promise<void> => {
+    const accounts = await fetchAccounts();
+    store.actions.replaceAccounts(accounts);
+    setAuthenticated(true);
+    void syncEngine.syncAll();
+  }, []);
 
   async function handleSend(thread: UnifiedThread, body: string): Promise<void> {
     if (thread.channel === 'chat') throw new Error('Envio pelo Google Chat ainda não está disponível.');
@@ -36,15 +47,16 @@ export default function App() {
   }
 
   async function beginAddAccount(): Promise<void> {
-    await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add');
+    try {
+      const state = await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add');
+      await awaitGoogleLogin(state);
+      store.actions.replaceAccounts(await fetchAccounts());
+      void syncEngine.syncAll();
+    } catch (error) {
+      setAuthError(messageOf(error, 'Falha ao adicionar a conta'));
+    }
   }
 
-  async function activateSession(): Promise<void> {
-    const accounts = await fetchAccounts();
-    store.actions.replaceAccounts(accounts);
-    setAuthenticated(true);
-    void syncEngine.syncAll();
-  }
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -52,17 +64,39 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (DEMO_MODE) return;
-    void sessionToken().then(async (token) => {
-      if (token !== null) await activateSession();
-      else setAuthenticated(false);
-    }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha ao carregar a sessão'));
-    const complete = () => finishGoogleLogin(globalThis.location?.href ?? '').then(async (done) => { if (done) await activateSession(); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
-    const listener = ({ url }: { url: string }) => void finishGoogleLogin(url).then(async () => { await activateSession(); }).catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Falha no login'));
-    const subscription = Linking.addEventListener('url', listener);
-    if (Platform.OS === 'web' && globalThis.location?.pathname.endsWith('/auth/google/callback')) void complete();
-    return () => subscription.remove();
+    void restoreThemeMode()
+      .then((mode) => {
+        if (mode !== undefined) store.actions.setThemeMode(mode);
+      })
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    void (async () => {
+      try {
+        if ((await sessionToken()) !== null) {
+          await activateSession();
+          return;
+        }
+        // Um login iniciado antes de o app ser fechado pode já ter sido concluído no navegador.
+        const pending = await pendingLoginState();
+        if (pending !== null) {
+          try {
+            await awaitGoogleLogin(pending, { timeoutMs: 8000 });
+            await activateSession();
+            return;
+          } catch {
+            // Sem code pendente: segue para a tela de login.
+          }
+        }
+        setAuthenticated(false);
+      } catch (error) {
+        setAuthError(messageOf(error, 'Falha ao carregar a sessão'));
+        setAuthenticated(false);
+      }
+    })();
+  }, [activateSession]);
 
   useEffect(() => {
     if (DEMO_MODE || !authenticated) return;
@@ -79,7 +113,9 @@ export default function App() {
     return <View style={styles.root} />;
   }
 
-  if (!DEMO_MODE && (!GOOGLE_CLIENT_ID || !authenticated)) return <SignInScreen error={authError} />;
+  if (!DEMO_MODE && (!GOOGLE_CLIENT_ID || !authenticated)) {
+    return <SignInScreen error={authError} onSignedIn={activateSession} />;
+  }
 
   return (
     <View style={styles.root}>
