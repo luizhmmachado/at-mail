@@ -5,7 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { createGmailRawMessage, extractGmailBodies, resolveChatSpaceName } from '../src/providers';
+import { chatMessagesUrl, createGmailRawMessage, extractGmailBodies, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -27,6 +27,14 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('busca as mensagens mais recentes de cada espaço', () => {
+    const url = new URL(chatMessagesUrl('spaces/example'));
+
+    assert.equal(url.pathname, '/v1/spaces/example/messages');
+    assert.equal(url.searchParams.get('pageSize'), '100');
+    assert.equal(url.searchParams.get('orderBy'), 'createTime desc');
+  });
+
   it('usa o nome do outro participante quando o DM não tem displayName', () => {
     const name = resolveChatSpaceName(
       { name: 'spaces/direct-message', displayName: '  ', spaceType: 'DIRECT_MESSAGE' },

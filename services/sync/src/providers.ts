@@ -249,13 +249,20 @@ export function resolveChatSpaceName(
   return space.name ?? 'Chat';
 }
 
+export function chatMessagesUrl(spaceName: string): string {
+  const url = new URL(`https://chat.googleapis.com/v1/${spaceName}/messages`);
+  url.searchParams.set('pageSize', '100');
+  url.searchParams.set('orderBy', 'createTime desc');
+  return url.toString();
+}
+
 export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
   const currentUser = (await db.query<{ name: string | null }>('SELECT name FROM atmail_users WHERE id = $1', [userId])).rows[0];
   const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
   const messages: MailMessage[] = [];
   for (const space of spaces.spaces ?? []) {
-    const page = await googleJson(`https://chat.googleapis.com/v1/${space.name}/messages?pageSize=100`, token);
+    const page = await googleJson(chatMessagesUrl(space.name), token);
     const spaceName = resolveChatSpaceName(space, page.messages ?? [], userId, currentUser?.name);
     for (const item of page.messages ?? []) {
       const sender = item.sender?.displayName ?? 'Google Chat';
