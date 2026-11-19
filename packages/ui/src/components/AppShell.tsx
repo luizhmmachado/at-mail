@@ -15,7 +15,7 @@ import { typeStyle } from '../theme/typography';
 type MobilePane = 'list' | 'reader';
 
 export interface AppShellProps {
-  onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;

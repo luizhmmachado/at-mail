@@ -11,6 +11,34 @@ import type {
   UnifiedThread
 } from '../domain/models';
 
+export interface ChatMessageThread {
+  id: string;
+  root?: ChatMessage;
+  threadName?: string;
+  replies: ChatMessage[];
+}
+
+export function groupChatMessageThreads(messages: readonly MailMessage[]): ChatMessageThread[] {
+  const groups = new Map<string, ChatMessage[]>();
+  const sorted = messages.filter((message): message is ChatMessage => message.channel === 'chat')
+    .sort((a, b) => a.receivedAt - b.receivedAt || a.id.localeCompare(b.id));
+  for (const message of sorted) {
+    const key = JSON.stringify([message.accountId, message.spaceId, message.threadName ?? message.id]);
+    const group = groups.get(key) ?? [];
+    group.push(message);
+    groups.set(key, group);
+  }
+  return Array.from(groups, ([id, group]) => {
+    const first = group[0]!;
+    // Older persisted messages have no reply flag; use chronological order only for those.
+    const root = group.find((message) => message.isThreadReply === false)
+      ?? group.find((message) => message.isThreadReply !== true);
+    return { id, root, threadName: first.threadName, replies: group.filter((message) => message !== root) };
+  }).sort((a, b) =>
+    (a.root ?? a.replies[0]!).receivedAt - (b.root ?? b.replies[0]!).receivedAt || a.id.localeCompare(b.id)
+  );
+}
+
 export type ChannelFilter = 'all' | 'email' | 'chat';
 export type ContextFilter = ContextId | 'all';
 

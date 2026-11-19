@@ -34,6 +34,7 @@ export interface RawMessageDto {
   senderName?: string;
   isDirectMessage?: boolean;
   threadName?: string;
+  isThreadReply?: boolean;
   reactions?: { emoji: string; count: number }[];
 }
 
@@ -223,6 +224,7 @@ export function toMailMessage(dto: RawMessageDto, accountId: string): MailMessag
       isDirectMessage: dto.isDirectMessage === true
     };
     if (dto.threadName !== undefined) chat.threadName = dto.threadName;
+    if (dto.isThreadReply !== undefined) chat.isThreadReply = dto.isThreadReply;
     if (dto.reactions !== undefined) chat.reactions = dto.reactions;
     return chat;
   }

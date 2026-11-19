@@ -38,7 +38,8 @@ function createLocalChatMessage(
   spaceName: string,
   isDirectMessage: boolean,
   body: string,
-  receivedAt: number
+  receivedAt: number,
+  threadName?: string
 ): ChatMessage {
   const senderName = account.displayName.trim() || account.email;
   return {
@@ -58,6 +59,7 @@ function createLocalChatMessage(
     spaceName,
     senderName,
     isDirectMessage,
+    ...(threadName ? { threadName, isThreadReply: true } : {}),
     reactions: []
   };
 }
@@ -81,7 +83,7 @@ export default function App() {
     void syncEngine.syncAll();
   }, [isPublicWeb]);
 
-  async function handleSend(thread: UnifiedThread, body: string): Promise<void> {
+  async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string): Promise<void> {
     const messages = store.getThreadMessages(thread.id);
     const last = messages[messages.length - 1];
     if (!last) throw new Error('Não encontrei a última mensagem desta conversa.');
@@ -89,13 +91,13 @@ export default function App() {
       const account = store.accountFor(last.accountId);
       if (!account) throw new Error('A conta desta conversa não está disponível.');
       const optimisticName = nextOptimisticChatMessageName();
-      const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now());
+      const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now(), chatThreadName);
       store.actions.upsertMessages([optimisticMessage]);
       try {
-        const receipt = await sendChatReply(last.accountId, last.spaceId, undefined, body);
+        const receipt = await sendChatReply(last.accountId, last.spaceId, chatThreadName, body);
         store.actions.removeMessages([optimisticMessage.id]);
         if (receipt !== undefined) {
-          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt)]);
+          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt, chatThreadName)]);
         }
       } catch (error) {
         store.actions.removeMessages([optimisticMessage.id]);

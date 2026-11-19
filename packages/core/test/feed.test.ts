@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   formatThreadTime,
   groupByDate,
+  groupChatMessageThreads,
   isChatMessage,
   isEmailMessage,
   matchesQuery,
@@ -128,6 +129,43 @@ describe('construção do feed unificado', () => {
     const sorted = [...timestamps].sort((a, b) => b - a);
     assert.deepEqual(timestamps, sorted);
     assert.equal(threads[0]?.channel, 'chat');
+  });
+});
+
+describe('threads dentro do chat', () => {
+  it('mantém respostas intercaladas na mensagem original, em ordem cronológica', () => {
+    const base = fixture().find(isChatMessage)!;
+    const root = { ...base, id: brand.message('root'), threadName: 'spaces/s1/threads/a', isThreadReply: false, receivedAt: NOW };
+    const other = { ...root, id: brand.message('other'), threadName: 'spaces/s1/threads/b', receivedAt: NOW + 100 };
+    const reply = { ...root, id: brand.message('reply'), isThreadReply: true, receivedAt: NOW + 200 };
+    const later = { ...reply, id: brand.message('later'), receivedAt: NOW + 300 };
+
+    const groups = groupChatMessageThreads([later, other, reply, root]);
+    assert.deepEqual(groups.map((group) => group.root?.id), [root.id, other.id]);
+    assert.deepEqual(groups[0]?.replies.map((message) => message.id), [reply.id, later.id]);
+    assert.deepEqual(groups[1]?.replies, []);
+  });
+
+  it('não promove resposta a raiz se o original não foi carregado e isola contas e espaços', () => {
+    const base = fixture().find(isChatMessage)!;
+    const reply = { ...base, threadName: 'spaces/s1/threads/a', isThreadReply: true };
+    const otherAccount = { ...reply, id: brand.message('other-account'), accountId: brand.account('other') };
+    const otherSpace = { ...reply, id: brand.message('other-space'), spaceId: brand.space('other') };
+    const groups = groupChatMessageThreads([reply, otherAccount, otherSpace]);
+    assert.equal(groups.length, 3);
+    assert.ok(groups.every((group) => group.root === undefined && group.replies.length === 1));
+  });
+
+  it('mantém mensagens legadas agrupadas e mensagens sem thread independentes', () => {
+    const base = fixture().find(isChatMessage)!;
+    const root = { ...base, id: brand.message('legacy-root'), threadName: 'spaces/s1/threads/a', receivedAt: NOW };
+    const reply = { ...root, id: brand.message('legacy-reply'), receivedAt: NOW + 100 };
+    const unthreaded = { ...base, id: brand.message('unthreaded'), receivedAt: NOW + 200 };
+    const groups = groupChatMessageThreads([reply, unthreaded, root, { ...unthreaded, id: brand.message('another') }]);
+    assert.equal(groups.length, 3);
+    assert.equal(groups[0]?.root?.id, root.id);
+    assert.deepEqual(groups[0]?.replies.map((message) => message.id), [reply.id]);
+    assert.equal(groups.slice(1).flatMap((group) => group.replies).length, 0);
   });
 });
 

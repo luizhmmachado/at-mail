@@ -33,6 +33,7 @@ No mobile: lista → leitor com "voltar" no topo; contextos em pills horizontais
 - [x] Monorepo TypeScript com `core` (puro) + `ui` (React Native) + Expo + Tauri
 - [x] Store observável com `useSyncExternalStore`, seleção automática e memoização
 - [x] Feed unificado: agrupa e-mail por thread do provedor e chat por espaço, ordena por atividade
+- [x] Threads do Google Chat: respostas ficam agrupadas sob a mensagem original. Abra o contador de respostas para ler e responder na thread; feche-a para voltar a enviar mensagens no espaço. No celular, a thread ocupa o leitor. O contador considera o histórico carregado; se a mensagem original não estiver nele, o app informa isso sem tratar uma resposta como a raiz.
 - [x] Contextos com contadores de não lidas, presets + custom, silenciamento por política
 - [x] Canal `Tudo | E-mail | Chat`, busca com operadores e toggle de não lidas
 - [x] App Shell responsivo: 3 colunas no desktop, lista/leitor no mobile
