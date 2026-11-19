@@ -9,7 +9,7 @@ import type {
   ThreadId,
   UnifiedThread
 } from '../domain/models';
-import type { ThemeMode } from '../theme/tokens';
+import type { ThemeMode, ThemePreference } from '../theme/tokens';
 import {
   groupingKey,
   selectFeed,
@@ -38,6 +38,7 @@ export interface SyncState {
 
 export interface UiState {
   themeMode: ThemeMode;
+  themePreference: ThemePreference;
   commandPaletteOpen: boolean;
   composeOpen: boolean;
   sidebarCollapsed: boolean;
@@ -59,11 +60,13 @@ export interface AppStoreOptions {
   contexts?: ContextWorkspace[];
   messages?: MailMessage[];
   themeMode?: ThemeMode;
+  themePreference?: ThemePreference;
   onMarkMessagesRead?: (messages: readonly MailMessage[], isRead: boolean) => void | Promise<void>;
 }
 
 const DEFAULT_UI: UiState = {
   themeMode: 'light',
+  themePreference: 'system',
   commandPaletteOpen: false,
   composeOpen: false,
   sidebarCollapsed: false
@@ -86,7 +89,12 @@ export function createAppStore(options: AppStoreOptions = {}) {
       selectionPinned: false
     },
     sync: { status: 'idle', inFlightAccounts: [] },
-    ui: { ...DEFAULT_UI, themeMode: options.themeMode ?? DEFAULT_UI.themeMode }
+    ui: {
+      ...DEFAULT_UI,
+      themeMode: options.themePreference === 'light' || options.themePreference === 'dark'
+        ? options.themePreference : options.themeMode ?? DEFAULT_UI.themeMode,
+      themePreference: options.themePreference ?? options.themeMode ?? DEFAULT_UI.themePreference
+    }
   };
 
   if (options.accounts) snapshot.accounts = options.accounts;
@@ -230,6 +238,19 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     setThemeMode(themeMode: ThemeMode): void {
+      patch({ ui: { ...snapshot.ui, themeMode, themePreference: themeMode } });
+    },
+
+    setThemePreference(themePreference: ThemePreference): void {
+      patch({ ui: {
+        ...snapshot.ui,
+        themePreference,
+        themeMode: themePreference === 'system' ? snapshot.ui.themeMode : themePreference
+      } });
+    },
+
+    applySystemTheme(themeMode: ThemeMode): void {
+      if (snapshot.ui.themePreference !== 'system' || snapshot.ui.themeMode === themeMode) return;
       patch({ ui: { ...snapshot.ui, themeMode } });
     },
 

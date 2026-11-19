@@ -1,12 +1,15 @@
-import { brand } from '@mail/core';
+import { brand, SyncError } from '@mail/core';
 import type { AccountId, ChatMessage, ContextId, EmailMessage, MailMessage, MailboxAdapter, SendRequest, SyncPage } from '@mail/core';
 import { apiFetch } from '../auth';
 import { parseChatSendReceipt } from '../chat-send-receipt';
 import type { ChatSendReceipt } from '../chat-send-receipt';
+import { parseEmailSendReceipt } from '../email-send';
+import type { EmailSendReceipt } from '../email-send';
 
 export interface SyncEnvelopeDto {
   messages: RawMessageDto[];
   cursor?: string;
+  hasMore?: boolean;
   removedIds?: string[];
   requiresReauth?: boolean;
 }
@@ -27,6 +30,7 @@ export interface RawMessageDto {
   labels?: string[];
   subject?: string;
   providerThreadId?: string;
+  rfcMessageId?: string;
   folder?: EmailMessage['folder'];
   attachments?: { id: string; fileName: string; mimeType: string; sizeInBytes: number }[];
   spaceId?: string;
@@ -41,6 +45,7 @@ export interface RawMessageDto {
 export interface SyncRequest {
   accountId: string;
   cursor?: string;
+  spaceId?: string;
   limit?: number;
 }
 
@@ -49,12 +54,6 @@ export interface EmailAttachmentPayload {
   mimeType: string;
   sizeInBytes: number;
   base64: string;
-}
-
-export interface ChatSendReceipt {
-  messageName: string;
-  spaceResourceName: string;
-  receivedAt: number;
 }
 
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
@@ -94,13 +93,14 @@ export async function markMessagesRead(messages: readonly MailMessage[], isRead:
   await Promise.all(requests);
 }
 
-export async function sendEmail(accountId: string, request: SendRequest & { attachments?: EmailAttachmentPayload[] }): Promise<void> {
+export async function sendEmail(accountId: string, request: SendRequest & { attachments?: EmailAttachmentPayload[] }): Promise<EmailSendReceipt | undefined> {
   const response = await apiFetch('/messages/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, ...request })
   });
-  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+  if (!response.ok) throw new Error(await messageResponseError(response));
+  return parseEmailSendReceipt(await response.json());
 }
 
 export async function sendChatMessage(accountId: string, recipient: string, body: string): Promise<ChatSendReceipt | undefined> {
@@ -109,7 +109,7 @@ export async function sendChatMessage(accountId: string, recipient: string, body
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, recipient, body })
   });
-  if (!response.ok) throw new Error(await chatResponseError(response));
+  if (!response.ok) throw new Error(await messageResponseError(response));
   return readChatSendReceipt(response);
 }
 
@@ -119,7 +119,7 @@ export async function sendChatReply(accountId: string, spaceId: string, threadNa
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, spaceId, threadName, body })
   });
-  if (!response.ok) throw new Error(await chatResponseError(response));
+  if (!response.ok) throw new Error(await messageResponseError(response));
   return readChatSendReceipt(response);
 }
 
@@ -134,12 +134,12 @@ export async function addChatReaction(accountId: string, messageId: string, emoj
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, messageId, emoji })
   });
-  if (!response.ok) throw new Error(await chatResponseError(response));
+  if (!response.ok) throw new Error(await messageResponseError(response));
 }
 
-async function chatResponseError(response: Response): Promise<string> {
+async function messageResponseError(response: Response): Promise<string> {
   const result = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
-  return typeof result?.error === 'string' ? result.error : `Não foi possível completar a operação do Chat (${response.status}).`;
+  return typeof result?.error === 'string' ? result.error : `Não foi possível completar a operação (${response.status}).`;
 }
 
 export async function updateAccountContexts(accountIds: readonly AccountId[], contextId: ContextId): Promise<void> {
@@ -181,7 +181,9 @@ export async function requestSync(provider: string, request: SyncRequest): Promi
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`sync ${provider} falhou (${response.status}): ${detail.slice(0, 200)}`);
+    const message = `sync ${provider} falhou (${response.status}): ${detail.slice(0, 200)}`;
+    if (provider === 'google-chat' && request.cursor && response.status === 400) throw new SyncError(message, 'cursor');
+    throw new Error(message);
   }
 
   return (await response.json()) as SyncEnvelopeDto;
@@ -194,6 +196,7 @@ export function toSyncPage(envelope: SyncEnvelopeDto, accountId: string): SyncPa
     removedIds: (envelope.removedIds ?? []).map((id) => brand.message(id))
   };
   if (envelope.cursor !== undefined) page.nextCursor = envelope.cursor;
+  if (envelope.hasMore === true) page.hasMore = true;
   if (envelope.requiresReauth === true) page.requiresReauth = true;
   return page;
 }
@@ -234,6 +237,7 @@ export function toMailMessage(dto: RawMessageDto, accountId: string): MailMessag
     channel: 'email',
     subject: dto.subject ?? '(sem assunto)',
     providerThreadId: dto.providerThreadId ?? dto.id,
+    rfcMessageId: dto.rfcMessageId,
     references: [],
     folder: dto.folder ?? 'inbox',
     attachments: dto.attachments ?? []
@@ -252,6 +256,10 @@ export function createHttpAdapter(provider: string, channel: 'email' | 'chat'): 
         limit: 60
       });
       return toSyncPage(envelope, account.id);
-    }
+    },
+    fetchSpace: channel === 'chat' ? async (account, spaceId) => {
+      const envelope = await requestSync(provider, { accountId: account.id, spaceId });
+      return toSyncPage(envelope, account.id);
+    } : undefined
   };
 }
