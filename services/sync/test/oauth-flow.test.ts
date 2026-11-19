@@ -418,6 +418,7 @@ describe('fluxo OAuth do backend', () => {
     assert.equal(web.status, 204);
     assert.equal(web.headers['access-control-allow-origin'], 'https://at-mail.vercel.app');
     assert.equal(web.headers.vary, 'Origin');
+    assert.match(web.headers['access-control-allow-methods'] ?? '', /DELETE/);
 
     const desktop = await call(app, 'OPTIONS', '/auth/google/start', '10.0.0.7', 'http://tauri.localhost');
     assert.equal(desktop.headers['access-control-allow-origin'], 'http://tauri.localhost');
