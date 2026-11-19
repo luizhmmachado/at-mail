@@ -140,7 +140,7 @@ export async function sendChat(
   userId: string,
   accountId: string,
   input: { recipient: string; body: string }
-): Promise<void> {
+): Promise<ChatSendReceipt> {
   const token = await accessToken(db, config, userId, accountId);
   let space: any;
   try {
@@ -162,10 +162,27 @@ export async function sendChat(
   }
   const spaceName = typeof space.name === 'string' ? space.name : '';
   if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName)) throw new Error('O Google Chat não retornou um espaço de conversa válido.');
-  await googleJsonRequest(`https://chat.googleapis.com/v1/${spaceName}/messages?requestId=${randomUUID()}`, token, {
+  const message = await googleJsonRequest(`https://chat.googleapis.com/v1/${spaceName}/messages?requestId=${randomUUID()}`, token, {
     method: 'POST',
     body: JSON.stringify({ text: input.body })
   });
+  return chatSendReceipt(spaceName, message);
+}
+
+export interface ChatSendReceipt {
+  messageName: string;
+  spaceResourceName: string;
+  receivedAt: number;
+}
+
+export function chatSendReceipt(spaceResourceName: string, message: unknown): ChatSendReceipt {
+  const result = message as { name?: unknown; createTime?: unknown } | null;
+  const messageName = typeof result?.name === 'string' ? result.name : '';
+  if (!/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+$/.test(messageName) || !messageName.startsWith(`${spaceResourceName}/messages/`)) {
+    throw new Error('O Google Chat não retornou uma mensagem enviada válida.');
+  }
+  const createTime = typeof result?.createTime === 'string' ? Date.parse(result.createTime) : Number.NaN;
+  return { messageName, spaceResourceName, receivedAt: Number.isFinite(createTime) ? createTime : Date.now() };
 }
 
 export function chatDirectMessageUrl(recipient: string): string {
@@ -196,15 +213,16 @@ export async function sendChatToSpace(
   userId: string,
   accountId: string,
   input: { spaceName: string; threadName?: string; body: string }
-): Promise<void> {
+): Promise<ChatSendReceipt> {
   const token = await accessToken(db, config, userId, accountId);
   const url = new URL(`https://chat.googleapis.com/v1/${input.spaceName}/messages`);
   url.searchParams.set('requestId', randomUUID());
   if (input.threadName) url.searchParams.set('messageReplyOption', 'REPLY_MESSAGE_OR_FAIL');
-  await googleJsonRequest(url.toString(), token, {
+  const message = await googleJsonRequest(url.toString(), token, {
     method: 'POST',
     body: JSON.stringify(chatReplyRequest(input.body, input.threadName))
   });
+  return chatSendReceipt(input.spaceName, message);
 }
 
 export function chatReactionRequest(emoji: string): { emoji: { unicode: string } } {

@@ -223,13 +223,13 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
             if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || (threadName !== undefined && !/^spaces\/[A-Za-z0-9._-]+\/threads\/[A-Za-z0-9._-]+$/.test(threadName))) {
               return json(res, 400, { error: 'espaço ou thread inválidos' }, headers);
             }
-            await sendChatToSpace(db, config, userId, accountId, { spaceName, threadName, body: message });
-            return json(res, 200, { sent: true }, headers);
+            const receipt = await sendChatToSpace(db, config, userId, accountId, { spaceName, threadName, body: message });
+            return json(res, 200, { sent: true, ...receipt }, headers);
           }
           const recipient = String(input.recipient ?? '').trim();
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return json(res, 400, { error: 'destinatário válido é obrigatório' }, headers);
-          await sendChat(db, config, userId, accountId, { recipient, body: message });
-          return json(res, 200, { sent: true }, headers);
+          const receipt = await sendChat(db, config, userId, accountId, { recipient, body: message });
+          return json(res, 200, { sent: true, ...receipt }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/react-chat' || url.pathname === '/api/messages/react-chat')) {
           const input = await body(req);

@@ -46,6 +46,9 @@ export function ThreadRow({
   const accent = theme.colors[contextAccent(context?.kind ?? 'custom')];
   const chatAvatarUrl = thread.channel === 'chat' ? thread.participants.find((participant) => participant.avatarUrl)?.avatarUrl : undefined;
   const unread = thread.unreadCount > 0;
+  const participantsLabel = threadParticipantsLabel(thread, 2);
+  const primaryLabel = thread.channel === 'chat' ? thread.subject : participantsLabel;
+  const secondaryLabel = thread.channel === 'chat' ? participantsLabel : thread.subject;
   const contentInset = mobile ? theme.layout.mobileRowContentInset : theme.layout.rowContentInset;
   const inset = theme.layout.rowDotInset;
 
@@ -63,7 +66,7 @@ export function ThreadRow({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${unread ? 'Não lida. ' : ''}${threadParticipantsLabel(thread)}. ${thread.subject}`}
+      accessibilityLabel={`${unread ? 'Não lida. ' : ''}${primaryLabel}. ${secondaryLabel}`}
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
@@ -105,7 +108,7 @@ export function ThreadRow({
             />
           )}
           <Text numberOfLines={1} style={{ ...typeStyle(theme, nameRole), flex: 1, color: theme.colors.textPrimary }}>
-            {threadParticipantsLabel(thread, 2)}
+            {primaryLabel}
           </Text>
           <Text
             style={{
@@ -136,7 +139,7 @@ export function ThreadRow({
               color: theme.colors.textPrimary
             }}
           >
-            {thread.subject}
+            {secondaryLabel}
           </Text>
           {mobile && context !== undefined && (
             <Text
