@@ -100,6 +100,8 @@ export interface ChatMessage extends BaseMessage {
   isDirectMessage: boolean;
   /** Nome da thread dentro do espaço (quando a mensagem é resposta). */
   threadName?: string;
+  /** Resposta na thread, em vez da mensagem que a iniciou. */
+  isThreadReply?: boolean;
   reactions?: ChatReactionSummary[];
 }
 

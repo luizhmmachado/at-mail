@@ -481,7 +481,7 @@ export function chatMessagesUrl(spaceName: string): string {
   const url = new URL(`https://chat.googleapis.com/v1/${spaceName}/messages`);
   url.searchParams.set('pageSize', '100');
   url.searchParams.set('orderBy', 'createTime desc');
-  url.searchParams.set('fields', 'messages(name,text,createTime,sender(name,displayName,email,avatarUrl),thread(name),emojiReactionSummaries(emoji(unicode),reactionCount)),nextPageToken');
+  url.searchParams.set('fields', 'messages(name,text,createTime,threadReply,sender(name,displayName,email,avatarUrl),thread(name),emojiReactionSummaries(emoji(unicode),reactionCount)),nextPageToken');
   return url.toString();
 }
 
@@ -542,7 +542,7 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
       const threadName = typeof item.thread?.name === 'string' ? item.thread.name : undefined;
       const lastReadTime = threadName === undefined ? undefined : threadReadTimes.get(threadName);
       const isRead = item.sender?.name === 'users/me' || isChatMessageRead(receivedAt, result.lastReadTime, result.readStateAvailable, lastReadTime);
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName } : {}), reactions });
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName, isThreadReply: item.threadReply === true } : {}), reactions });
     }
   }
   return { messages, removedIds: [] };

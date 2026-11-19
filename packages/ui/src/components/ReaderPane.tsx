@@ -2,11 +2,13 @@ import { createElement, useMemo, useRef, useState, type ComponentRef, type React
 import { Image, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
+  groupChatMessageThreads,
   isChatMessage,
   isEmailMessage,
   threadParticipantsLabel,
   type Attachment,
   type ChatMessage,
+  type ChatMessageThread,
   type MailMessage,
   type UnifiedThread
 } from '@mail/core';
@@ -25,7 +27,7 @@ import { Glyph, type GlyphName } from './LucideGlyph';
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
-  onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
 }
 
@@ -44,11 +46,27 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const messages = useSelectedThreadMessages();
   const { feed } = useFeed();
   const readerScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
-  const [draft, setDraft] = useState('');
+  const replyScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const [selectedChatThread, setSelectedChatThread] = useState<{ conversationId: string; id: string }>();
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
   const mobile = onBack !== undefined;
   const gutter = mobile ? theme.layout.mobilePaddingX : theme.layout.readerGutter;
+  const chatThreads = useMemo(() => groupChatMessageThreads(messages), [messages]);
+  const activeChatThread = selectedChatThread?.conversationId === thread?.id
+    ? chatThreads.find((item) => item.id === selectedChatThread?.id)
+    : undefined;
+  const draftKey = JSON.stringify([thread?.id, activeChatThread?.id ?? 'main']);
+  const draft = drafts[draftKey] ?? '';
+  const setDraft = (value: string): void => {
+    setDrafts((current) => ({ ...current, [draftKey]: value }));
+  };
+  const selectChatThread = (item: ChatMessageThread | undefined): void => {
+    if (sending) return;
+    setSelectedChatThread(item && thread ? { conversationId: thread.id, id: item.id } : undefined);
+    setNotice(undefined);
+  };
 
   const contextLabels = useMemo(
     () =>
@@ -102,7 +120,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
     setSending(true);
     setNotice(undefined);
     try {
-      await onSend(thread, draft.trim());
+      await onSend(thread, draft.trim(), activeChatThread?.threadName);
       setDraft('');
       actions.toggleCompose(false);
       setNotice('Mensagem enviada.');
@@ -188,7 +206,9 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
         </View>
       )}
 
-      <ScrollView
+      <View style={{ flex: 1, flexDirection: 'row', minHeight: 0 }}>
+      {(!mobile || activeChatThread === undefined) && <ScrollView
+        style={{ flex: 1, minWidth: 0 }}
         ref={readerScrollRef}
         onContentSizeChange={() => {
           if (isChatThread) readerScrollRef.current?.scrollToEnd({ animated: false });
@@ -212,7 +232,16 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
 
         <View style={{ marginTop: isChatThread ? 0 : mobile ? theme.space[5] : theme.space[8], gap: theme.space[6] }}>
           {isChatThread ? (
-            <ChatTimeline messages={messages} onReactChat={onReactChat} />
+            <ChatTimeline
+              messages={chatThreads.flatMap((item) => item.root ? [item.root] : [])}
+              onReactChat={onReactChat}
+              renderThreadAction={(message) => {
+                const item = chatThreads.find((group) => group.root?.id === message.id);
+                return item?.threadName ? (
+                  <ChatThreadButton item={item} disabled={sending} onPress={() => selectChatThread(item)} />
+                ) : null;
+              }}
+            />
           ) : (
             messages.map((message, index) =>
               index === messages.length - 1 ? (
@@ -223,7 +252,37 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
             )
           )}
         </View>
-      </ScrollView>
+        {isChatThread && chatThreads.filter((item) => item.root === undefined).map((item) => (
+          <View key={item.id} style={{ marginTop: theme.space[3], padding: theme.space[3], borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle, borderRadius: theme.radius.lg }}>
+            <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+              Mensagem original fora do histórico carregado
+            </Text>
+            <ChatThreadButton item={item} disabled={sending} onPress={() => selectChatThread(item)} />
+          </View>
+        ))}
+      </ScrollView>}
+      {isChatThread && activeChatThread !== undefined && (
+        <View style={{ flex: mobile ? 1 : undefined, width: mobile ? undefined : '45%', minWidth: 0, borderLeftWidth: mobile ? 0 : theme.border.hairline, borderLeftColor: theme.colors.borderSubtle, backgroundColor: theme.colors.surfaceSunken }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: theme.space[3], gap: theme.space[2] }}>
+            <Text style={{ ...typeStyle(theme, 'readerName'), flex: 1, color: theme.colors.textPrimary }}>Conversa na thread</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Fechar thread" disabled={sending} onPress={() => selectChatThread(undefined)} style={{ padding: theme.space[2] }}>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Voltar ao chat</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            key={activeChatThread.id}
+            ref={replyScrollRef}
+            onContentSizeChange={() => replyScrollRef.current?.scrollToEnd({ animated: false })}
+            contentContainerStyle={{ padding: theme.space[3] }}
+          >
+            {activeChatThread.root === undefined && (
+              <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>Mensagem original fora do histórico carregado</Text>
+            )}
+            <ChatTimeline messages={[...(activeChatThread.root ? [activeChatThread.root] : []), ...activeChatThread.replies]} onReactChat={onReactChat} />
+          </ScrollView>
+        </View>
+      )}
+      </View>
 
       <View
         style={{
@@ -245,12 +304,12 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[2] }}>
             <Glyph name="reply" size={16} color={theme.colors.textSecondary} />
             <Text style={{ ...typeStyle(theme, 'composeLabel'), color: theme.colors.textSecondary }}>
-              {isChatThread ? 'Nova mensagem na conversa' : `Responder a ${replyTarget}`}
+              {isChatThread ? activeChatThread ? 'Responder na thread' : 'Nova mensagem na conversa' : `Responder a ${replyTarget}`}
             </Text>
           </View>
 
           <TextInput
-            accessibilityLabel={isChatThread ? 'Escrever mensagem' : 'Escrever resposta'}
+            accessibilityLabel={isChatThread ? activeChatThread ? 'Escrever resposta na thread' : 'Escrever mensagem' : 'Escrever resposta'}
             multiline
             autoFocus={snapshot.ui.composeOpen}
             value={draft}
@@ -258,7 +317,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
               setDraft(value);
               if (notice !== undefined) setNotice(undefined);
             }}
-            placeholder={isChatThread ? 'Escreva uma mensagem…' : 'Escreva uma resposta…'}
+            placeholder={isChatThread && !activeChatThread ? 'Escreva uma mensagem…' : 'Escreva uma resposta…'}
             placeholderTextColor={theme.colors.textSecondary}
             style={{
               ...typeStyle(theme, 'composeBody'),
@@ -532,7 +591,19 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
   );
 }
 
-function ChatTimeline({ messages, onReactChat }: { messages: readonly MailMessage[]; onReactChat?: ReaderPaneProps['onReactChat'] }): ReactElement {
+function ChatThreadButton({ item, disabled, onPress }: { item: ChatMessageThread; disabled: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  const count = item.replies.length;
+  return (
+    <Pressable accessibilityRole="button" disabled={disabled} accessibilityLabel={count > 0 ? `Abrir thread com ${count} ${count === 1 ? 'resposta' : 'respostas'}` : 'Responder na thread'} onPress={onPress} style={{ paddingVertical: theme.space[2] }}>
+      <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>
+        {count > 0 ? `${count} ${count === 1 ? 'resposta' : 'respostas'}` : 'Responder na thread'}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages: readonly MailMessage[]; onReactChat?: ReaderPaneProps['onReactChat']; renderThreadAction?: (message: ChatMessage) => ReactElement | null }): ReactElement {
   const theme = useTheme();
   return (
     <View style={{ gap: theme.space[1] }}>
@@ -620,6 +691,7 @@ function ChatTimeline({ messages, onReactChat }: { messages: readonly MailMessag
                   />
                   {!message.id.includes(':optimistic:') && <ChatReactionControls message={message} onReactChat={onReactChat} />}
                 </View>
+                {renderThreadAction?.(message)}
               </View>
             </View>
           </View>
