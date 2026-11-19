@@ -48,7 +48,7 @@ export default function App() {
     const last = messages[messages.length - 1];
     if (!last) throw new Error('Não encontrei a última mensagem desta conversa.');
     if (isChatMessage(last)) {
-      await sendChatReply(last.accountId, last.spaceId, last.threadName, body);
+      await sendChatReply(last.accountId, last.spaceId, undefined, body);
       void syncEngine.syncChannel('chat');
       return;
     }

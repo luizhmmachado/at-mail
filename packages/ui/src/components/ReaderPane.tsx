@@ -245,12 +245,12 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[2] }}>
             <Glyph name="reply" size={16} color={theme.colors.textSecondary} />
             <Text style={{ ...typeStyle(theme, 'composeLabel'), color: theme.colors.textSecondary }}>
-              Responder a {replyTarget}
+              {isChatThread ? 'Nova mensagem na conversa' : `Responder a ${replyTarget}`}
             </Text>
           </View>
 
           <TextInput
-            accessibilityLabel="Escrever resposta"
+            accessibilityLabel={isChatThread ? 'Escrever mensagem' : 'Escrever resposta'}
             multiline
             autoFocus={snapshot.ui.composeOpen}
             value={draft}
@@ -258,7 +258,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
               setDraft(value);
               if (notice !== undefined) setNotice(undefined);
             }}
-            placeholder="Escreva uma resposta…"
+            placeholder={isChatThread ? 'Escreva uma mensagem…' : 'Escreva uma resposta…'}
             placeholderTextColor={theme.colors.textSecondary}
             style={{
               ...typeStyle(theme, 'composeBody'),
@@ -286,7 +286,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
             </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Enviar resposta"
+              accessibilityLabel={isChatThread ? 'Enviar mensagem' : 'Enviar resposta'}
               accessibilityState={{ disabled: draft.trim().length === 0 }}
               onPress={() => void send()}
               style={{
