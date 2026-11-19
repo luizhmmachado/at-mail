@@ -21,6 +21,7 @@ import { LandingScreen } from './src/LandingScreen';
 import type { AccountId, ContextId, UnifiedThread } from '@mail/core';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const CHAT_SYNC_INTERVAL_MS = 15 * 1000;
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -130,13 +131,18 @@ export default function App() {
     const syncIfActive = (): void => {
       if (AppState.currentState === 'active') void syncEngine.syncAll();
     };
+    const syncChatIfActive = (): void => {
+      if (AppState.currentState === 'active') void syncEngine.syncChannel('chat');
+    };
     syncIfActive();
     const interval = setInterval(syncIfActive, SYNC_INTERVAL_MS);
+    const chatInterval = setInterval(syncChatIfActive, CHAT_SYNC_INTERVAL_MS);
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') syncIfActive();
     });
     return () => {
       clearInterval(interval);
+      clearInterval(chatInterval);
       subscription?.remove();
     };
   }, [authenticated]);

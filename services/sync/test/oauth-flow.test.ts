@@ -5,7 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { chatMessagesUrl, createGmailRawMessage, extractGmailBodies, gmailMessagesUrl, resolveChatSpaceName } from '../src/providers';
+import { chatMessagesUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailMessagesUrl, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -27,6 +27,14 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('inclui destinatário e requestId no corpo de setup do DM', () => {
+    assert.deepEqual(createDirectMessageSetupRequest('pessoa@example.com', 'request-1'), {
+      requestId: 'request-1',
+      space: { spaceType: 'DIRECT_MESSAGE', singleUserBotDm: false },
+      memberships: [{ member: { name: 'users/pessoa@example.com', type: 'HUMAN' } }]
+    });
+  });
+
   it('busca as mensagens mais recentes de cada espaço', () => {
     const url = new URL(chatMessagesUrl('spaces/example'));
 

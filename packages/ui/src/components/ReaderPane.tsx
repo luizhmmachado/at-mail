@@ -1,5 +1,5 @@
 import { createElement, useMemo, useRef, useState, type ComponentRef, type ReactElement } from 'react';
-import { Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Image, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
   isChatMessage,
@@ -441,6 +441,7 @@ function ConversationHeading({
 
 function EarlierMessage({ message }: { message: MailMessage }): ReactElement {
   const theme = useTheme();
+  const sender = message.participants[0];
   return (
     <View
       style={{
@@ -453,7 +454,15 @@ function EarlierMessage({ message }: { message: MailMessage }): ReactElement {
         gap: 6
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[2] }}>
+        {message.channel === 'chat' && sender?.avatarUrl && (
+          <Image
+            accessibilityLabel={`Foto de ${senderName(message)}`}
+            source={{ uri: sender.avatarUrl }}
+            resizeMode="cover"
+            style={{ width: 26, height: 26, borderRadius: theme.radius.pill }}
+          />
+        )}
         <Text style={{ ...typeStyle(theme, 'earlierName'), color: theme.colors.textPrimary }}>
           {senderName(message)}
         </Text>
@@ -473,6 +482,14 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: theme.space[2] }}>
+        {message.channel === 'chat' && sender?.avatarUrl && (
+          <Image
+            accessibilityLabel={`Foto de ${senderName(message)}`}
+            source={{ uri: sender.avatarUrl }}
+            resizeMode="cover"
+            style={{ width: 30, height: 30, borderRadius: theme.radius.pill }}
+          />
+        )}
         <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
           {senderName(message)}
         </Text>

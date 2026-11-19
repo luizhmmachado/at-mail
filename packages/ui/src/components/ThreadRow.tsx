@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Image, Pressable, Text, View } from 'react-native';
 import {
   contextAccent,
   formatThreadTime,
@@ -44,6 +44,7 @@ export function ThreadRow({
   const primaryContextId: ContextId | undefined = thread.contextIds[0];
   const context = snapshot.contexts.find((item) => item.id === primaryContextId);
   const accent = theme.colors[contextAccent(context?.kind ?? 'custom')];
+  const chatAvatarUrl = thread.channel === 'chat' ? thread.participants.find((participant) => participant.avatarUrl)?.avatarUrl : undefined;
   const unread = thread.unreadCount > 0;
   const contentInset = mobile ? theme.layout.mobileRowContentInset : theme.layout.rowContentInset;
   const inset = theme.layout.rowDotInset;
@@ -105,6 +106,14 @@ export function ThreadRow({
               }}
             />
           </View>
+          {chatAvatarUrl !== undefined && (
+            <Image
+              accessibilityLabel={`Foto de ${threadParticipantsLabel(thread, 1)}`}
+              source={{ uri: chatAvatarUrl }}
+              resizeMode="cover"
+              style={{ width: 22, height: 22, marginRight: 7, borderRadius: theme.radius.pill }}
+            />
+          )}
           <Text numberOfLines={1} style={{ ...typeStyle(theme, nameRole), flex: 1, color: theme.colors.textPrimary }}>
             {threadParticipantsLabel(thread, 2)}
           </Text>
