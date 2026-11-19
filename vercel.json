@@ -1,15 +1,97 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/index.ts", "use": "@vercel/node" },
-    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "apps/app/dist" } }
+    {
+      "src": "api/index.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "apps/app/dist"
+      }
+    }
   ],
   "routes": [
-    { "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2" },
-    { "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail-web.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2" },
-    { "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/$1$2" },
-    { "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$", "has": [{ "type": "host", "value": "at-mail-web.vercel.app" }], "dest": "https://at-mail-sync-legacy.vercel.app/$1$2" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "api/index.ts" }
+    {
+      "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "at-mail.vercel.app"
+        }
+      ],
+      "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2"
+    },
+    {
+      "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "at-mail-web.vercel.app"
+        }
+      ],
+      "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2"
+    },
+    {
+      "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "at-mail.vercel.app"
+        }
+      ],
+      "dest": "https://at-mail-sync-legacy.vercel.app/$1$2"
+    },
+    {
+      "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "at-mail-web.vercel.app"
+        }
+      ],
+      "dest": "https://at-mail-sync-legacy.vercel.app/$1$2"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "api/index.ts"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/((?!auth/|api/|accounts/|vault/|sync/|messages/).*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://at-mail-sync-legacy.vercel.app https://oauth2.googleapis.com https://www.googleapis.com https://gmail.googleapis.com https://chat.googleapis.com; frame-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
   ]
 }

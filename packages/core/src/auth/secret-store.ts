@@ -10,9 +10,10 @@ import type { SecretRef } from '../domain/ids';
  *   `keyring` do SO (Keychain no macOS, Credential Manager no Windows,
  *   libsecret no Linux).
  * - Mobile (Expo): `expo-secure-store` (iOS Keychain / Android Keystore).
- * - Web: cookie `HttpOnly; Secure; SameSite=Lax` emitido pelo backend de
- *   sincronização. O front-end nunca enxerga o refresh token; recebe apenas
- *   access tokens de curta duração em memória.
+ * - Web: token de sessão opaco emitido pelo backend de sincronização e guardado
+ *   em `localStorage` (o backend também aceita o cookie `HttpOnly; Secure`
+ *   `atmail_session`). O front-end nunca enxerga o refresh token do Google:
+ *   ele fica cifrado no servidor.
  */
 export interface SecretStore {
   get(ref: SecretRef): Promise<string | undefined>;

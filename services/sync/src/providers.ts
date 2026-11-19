@@ -63,6 +63,18 @@ export async function markGmailMessagesRead(
   )));
 }
 
+const EMAIL_ADDRESS_PATTERN = /^[^\s@,;<>()[\]\\"]+@[^\s@,;<>()[\]\\"]+\.[^\s@,;<>()[\]\\"]+$/;
+
+/** Validação de destinatário usada tanto na API quanto na montagem do MIME. */
+export function isValidEmailAddress(value: string): boolean {
+  return value.length > 0 && value.length <= 254 && EMAIL_ADDRESS_PATTERN.test(value);
+}
+
+function safeHeaderValue(value: string, label: string): string {
+  if (/[\r\n]/.test(value)) throw new Error(`cabeçalho de e-mail inválido: ${label}`);
+  return value;
+}
+
 export async function sendGmail(
   db: Db,
   config: SyncConfig,
@@ -86,12 +98,20 @@ export function createGmailRawMessage(input: {
   attachments?: GmailAttachmentPayload[];
 }): string {
   const subject = encodeMimeHeader((input.subject ?? '').replace(/[\r\n]/g, ' '));
+  // Cada destinatário entra no cabeçalho To: — CR/LF aqui permitiria injetar
+  // cabeçalhos extras (Bcc, Content-Type) a partir de um endereço recebido.
+  const recipients = input.to.map((address) => safeHeaderValue(address.trim(), 'To'));
+  for (const address of recipients) {
+    if (!isValidEmailAddress(address)) throw new Error('destinatário de e-mail inválido');
+  }
+  if (recipients.length === 0) throw new Error('destinatário de e-mail obrigatório');
   const headers = [
-    `To: ${input.to.join(', ')}`,
+    `To: ${recipients.join(', ')}`,
     `Subject: ${subject}`,
     'MIME-Version: 1.0'
   ];
-  if (input.inReplyTo) headers.push(`In-Reply-To: ${input.inReplyTo}`, `References: ${input.inReplyTo}`);
+  const inReplyTo = input.inReplyTo === undefined ? undefined : safeHeaderValue(input.inReplyTo.trim(), 'In-Reply-To');
+  if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
 
   const attachments = input.attachments ?? [];
   if (attachments.length === 0) {
@@ -110,7 +130,9 @@ export function createGmailRawMessage(input: {
   ];
 
   for (const attachment of attachments) {
-    const fileName = attachment.fileName.replace(/[\r\n"]/g, '_').slice(0, 180) || 'anexo';
+    if (/[\r\n]/.test(attachment.fileName)) throw new Error('nome de anexo inválido');
+    if (!/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(attachment.mimeType)) throw new Error('tipo de anexo inválido');
+    const fileName = attachment.fileName.replace(/["]/g, '_').slice(0, 180) || 'anexo';
     const fallbackName = fileName.replace(/[^\x20-\x7E]/g, '_');
     const encodedName = encodeURIComponent(fileName);
     parts.push(

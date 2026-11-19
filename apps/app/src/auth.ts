@@ -81,12 +81,17 @@ function queryString(params: ReadonlyArray<readonly [string, string]>): string {
 }
 
 /**
- * O `state` é gerado pelo backend e só ele aceita o callback do Google: um
- * state desconhecido é descartado, o que mantém a rota pública protegida.
+ * O `state` e o `code_challenge` são registrados no backend; o exchange só é
+ * aceito com state, code e verifier correspondentes, o que mantém a rota
+ * pública protegida contra login CSRF.
  */
-async function startLogin(): Promise<string> {
+async function startLogin(codeChallengeValue: string): Promise<string> {
   const platform = isTauriRuntime() ? 'tauri' : Platform.OS;
-  const response = await fetch(`${SYNC_API_URL}/auth/google/start?platform=${encodeURIComponent(platform)}`, { method: 'POST' });
+  const response = await fetch(`${SYNC_API_URL}/auth/google/start?platform=${encodeURIComponent(platform)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ codeChallenge: codeChallengeValue })
+  });
   if (response.status === 429) throw new Error('Muitas tentativas de login. Aguarde alguns minutos e tente de novo.');
   if (!response.ok) throw new Error(`Não foi possível iniciar o login (${response.status}).`);
   const result = (await response.json()) as { state?: string };
@@ -100,8 +105,8 @@ async function startLogin(): Promise<string> {
  */
 export async function beginGoogleLogin(clientId: string, scopes: readonly string[], mode: LoginMode = 'login'): Promise<string> {
   if (clientId.length === 0) throw new Error('Client ID do Google não configurado nesta build.');
-  const state = await startLogin();
   const verifier = await randomHex(32);
+  const state = await startLogin(codeChallenge(verifier));
   await storageSet(STATE_KEY, state);
   await storageSet(VERIFIER_KEY, verifier);
   await storageSet(MODE_KEY, mode);
@@ -133,7 +138,11 @@ export async function awaitGoogleLogin(state: string, options: GoogleLoginOption
   const interval = options.intervalMs ?? POLL_INTERVAL_MS;
   const deadline = Date.now() + (options.timeoutMs ?? LOGIN_TIMEOUT_MS);
   while (Date.now() < deadline) {
-    const response = await fetch(`${SYNC_API_URL}/auth/google/code?state=${encodeURIComponent(state)}`);
+    const response = await fetch(`${SYNC_API_URL}/auth/google/code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
     if (response.ok) {
       const result = (await response.json()) as { code?: string; error?: string };
       if (typeof result.error === 'string' && result.error.length > 0) throw new Error(describeOAuthError(result.error));
@@ -152,9 +161,9 @@ async function exchangeGoogleCode(state: string, code: string): Promise<void> {
   if (expected !== state) throw new Error('Estado OAuth inválido. Recomece o login.');
   const mode = ((await storageGet(MODE_KEY)) ?? 'login') as LoginMode;
   const payload = JSON.stringify({
+    state,
     code,
-    codeVerifier: (await storageGet(VERIFIER_KEY)) ?? undefined,
-    redirectUri: redirectUri()
+    codeVerifier: (await storageGet(VERIFIER_KEY)) ?? undefined
   });
   const path = mode === 'add' ? '/auth/google/add' : '/auth/google/exchange';
   const response = mode === 'add'
@@ -169,6 +178,15 @@ async function exchangeGoogleCode(state: string, code: string): Promise<void> {
   await storageDelete(STATE_KEY);
   await storageDelete(VERIFIER_KEY);
   await storageSet(MODE_KEY, 'login');
+}
+
+/** Encerra a sessão no servidor e descarta o token local. */
+export async function signOut(): Promise<void> {
+  try {
+    await apiFetch('/auth/session', { method: 'DELETE' });
+  } finally {
+    await storageDelete(TOKEN_KEY);
+  }
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {

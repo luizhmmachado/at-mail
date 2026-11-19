@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
-import { hashToken } from '../src/crypto';
+import { hashToken, pkceChallenge } from '../src/crypto';
 import { serverlessDatabaseUrl } from '../src/db';
 import type { Db } from '../src/db';
 import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
@@ -12,6 +13,7 @@ import { createAppServer, type AppServer } from '../src/server';
 interface PendingRow {
   code: string;
   error: string;
+  codeChallenge: string;
   createdAt: number;
 }
 
@@ -21,7 +23,6 @@ const config: SyncConfig = {
   clientId: 'client-id',
   clientSecret: 'client-secret',
   redirectUri: 'http://localhost:8790/auth/google/callback',
-  sessionSecret: 'session',
   encryptionKey: Buffer.alloc(32),
   publicOrigins: ['http://localhost:8081', 'https://at-mail.vercel.app', 'http://tauri.localhost', 'tauri://localhost'],
   webAppOrigin: 'https://at-mail.vercel.app'
@@ -220,6 +221,7 @@ function createFakeDb(): {
   const accounts = new Map<string, { userId: string; contextId: string; provider?: string; channel?: string; email?: string }>();
   const notifications = new Map<string, boolean>();
   const credentials = new Set<string>();
+  const attempts = new Map<string, { windowStart: number; count: number }>();
 
   let db: Db;
   db = {
@@ -228,6 +230,25 @@ function createFakeDb(): {
       if (text.startsWith('SELECT user_id, expires_at FROM atmail_sessions')) {
         if (values[0] !== hashToken('test-session')) return { rows: [] };
         return { rows: [{ user_id: 'user-1', expires_at: String(Date.now() + 60_000) } as unknown as T] };
+      }
+      if (text.startsWith('UPDATE atmail_sessions SET expires_at') || text.startsWith('DELETE FROM atmail_sessions')) {
+        return { rows: [] };
+      }
+      if (text.startsWith('INSERT INTO atmail_login_attempts')) {
+        const [bucket, key, windowStart] = values as [string, string, number];
+        const id = `${bucket}:${key}`;
+        const current = attempts.get(id);
+        const count = current && current.windowStart === windowStart ? current.count + 1 : 1;
+        attempts.set(id, { windowStart, count });
+        return { rows: [{ count } as unknown as T] };
+      }
+      if (text.startsWith('DELETE FROM atmail_login_attempts WHERE window_start <')) {
+        const cutoff = Number(values[0]);
+        for (const [id, attempt] of attempts) if (attempt.windowStart < cutoff) attempts.delete(id);
+        return { rows: [] };
+      }
+      if (text.startsWith('SELECT account_id FROM atmail_credentials') || text.startsWith('SELECT encrypted_refresh_token FROM atmail_credentials')) {
+        return { rows: [] };
       }
       if (text.startsWith('SELECT provider, channel FROM atmail_accounts')) {
         const [accountId, userId] = values as [string, string];
@@ -280,8 +301,8 @@ function createFakeDb(): {
         return { rows: [] };
       }
       if (text.startsWith('INSERT INTO atmail_oauth_pending')) {
-        const [state, code, error, createdAt] = values as [string, string, string, number];
-        rows.set(state, { code, error, createdAt });
+        const [state, code, error, codeChallenge, createdAt] = values as [string, string, string, string, number];
+        rows.set(state, { code, error, codeChallenge, createdAt });
         return { rows: [] };
       }
       if (text.startsWith('UPDATE atmail_oauth_pending')) {
@@ -292,11 +313,19 @@ function createFakeDb(): {
         row.error = error;
         return { rows: [{ state } as unknown as T] };
       }
-      if (text.startsWith('SELECT code, error FROM atmail_oauth_pending')) {
+      if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE state = $1 AND created_at > $2 AND')) {
         const [state, since] = values as [string, number];
         const row = rows.get(state);
         if (!row || row.createdAt <= since || (row.code === '' && row.error === '')) return { rows: [] };
+        rows.delete(state);
         return { rows: [{ code: row.code, error: row.error } as unknown as T] };
+      }
+      if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE state = $1 AND code = $2')) {
+        const [state, code, since] = values as [string, string, number];
+        const row = rows.get(state);
+        if (!row || row.createdAt <= since || row.code !== code) return { rows: [] };
+        rows.delete(state);
+        return { rows: [{ code_challenge: row.codeChallenge } as unknown as T] };
       }
       if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE state =')) {
         rows.delete(String(values[0]));
@@ -358,13 +387,14 @@ async function call(
   });
 }
 
-async function startLogin(app: AppServer, ip: string, platform?: string, origin?: string): Promise<string> {
-  const response = await call(app, 'POST', `/auth/google/start${platform ? `?platform=${platform}` : ''}`, ip, origin);
+async function startLogin(app: AppServer, ip: string, platform?: string, origin?: string): Promise<{ state: string; verifier: string }> {
+  const verifier = randomBytes(32).toString('hex');
+  const response = await call(app, 'POST', `/auth/google/start${platform ? `?platform=${platform}` : ''}`, ip, origin, undefined, JSON.stringify({ codeChallenge: pkceChallenge(verifier) }));
   assert.equal(response.status, 200);
   const { state } = JSON.parse(response.body) as { state: string };
   assert.equal(typeof state, 'string');
   assert.ok(state.length >= 32, 'state precisa ter entropia suficiente');
-  return state;
+  return { state, verifier };
 }
 
 describe('fluxo OAuth do backend', () => {
@@ -459,9 +489,9 @@ describe('fluxo OAuth do backend', () => {
     const app = await createAppServer(config, db);
     const ip = '10.0.0.2';
 
-    const state = await startLogin(app, ip);
+    const { state } = await startLogin(app, ip);
 
-    const beforeCallback = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
+    const beforeCallback = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, JSON.stringify({ state }));
     assert.deepEqual(JSON.parse(beforeCallback.body), { pending: true });
 
     const callback = await call(app, 'GET', `/auth/google/callback?code=CODE123&state=${state}`, ip);
@@ -470,10 +500,10 @@ describe('fluxo OAuth do backend', () => {
     assert.match(callback.body, /voltando ao @mail/i);
     assert.equal(callback.headers['cache-control'], 'no-store');
 
-    const polled = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
+    const polled = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, JSON.stringify({ state }));
     assert.deepEqual(JSON.parse(polled.body), { code: 'CODE123' });
 
-    const consumed = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
+    const consumed = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, JSON.stringify({ state }));
     assert.deepEqual(JSON.parse(consumed.body), { pending: true }, 'o code não pode ser devolvido duas vezes');
     await app.close();
   });
@@ -482,24 +512,24 @@ describe('fluxo OAuth do backend', () => {
     const { db } = createFakeDb();
     const app = await createAppServer(config, db);
 
-    const webState = await startLogin(app, '10.0.0.9', 'web');
+    const { state: webState } = await startLogin(app, '10.0.0.9', 'web');
     const webCallback = await call(app, 'GET', `/auth/google/callback?code=WEB_CODE&state=${encodeURIComponent(webState)}`, '10.0.0.9');
     assert.match(webCallback.body, /https:\/\/at-mail\.vercel\.app\//);
 
-    const androidState = await startLogin(app, '10.0.0.10', 'android');
+    const { state: androidState } = await startLogin(app, '10.0.0.10', 'android');
     const androidCallback = await call(app, 'GET', `/auth/google/callback?code=ANDROID_CODE&state=${encodeURIComponent(androidState)}`, '10.0.0.10');
     assert.match(androidCallback.body, /atmail:\/\/auth\/google\/callback/);
     assert.match(androidCallback.body, new RegExp(encodeURIComponent(androidState)));
 
-    const tauriState = await startLogin(app, '10.0.0.11', 'tauri');
+    const { state: tauriState } = await startLogin(app, '10.0.0.11', 'tauri');
     const tauriCallback = await call(app, 'GET', `/auth/google/callback?code=TAURI_CODE&state=${encodeURIComponent(tauriState)}`, '10.0.0.11');
     assert.match(tauriCallback.body, /https:\/\/at-mail\.vercel\.app\//);
 
-    const legacyWebState = await startLogin(app, '10.0.0.13', 'web', 'https://at-mail-web.vercel.app');
+    const { state: legacyWebState } = await startLogin(app, '10.0.0.13', 'web', 'https://at-mail-web.vercel.app');
     const legacyWebCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_WEB_CODE&state=${encodeURIComponent(legacyWebState)}`, '10.0.0.13');
     assert.match(legacyWebCallback.body, /https:\/\/at-mail-web\.vercel\.app\//);
 
-    const legacyMobileState = await startLogin(app, '10.0.0.14');
+    const { state: legacyMobileState } = await startLogin(app, '10.0.0.14');
     const legacyMobileCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_CODE&state=${encodeURIComponent(legacyMobileState)}`, '10.0.0.14');
     assert.match(legacyMobileCallback.body, /atmail:\/\/auth\/google\/callback/);
     await app.close();
@@ -510,12 +540,12 @@ describe('fluxo OAuth do backend', () => {
     const app = await createAppServer(config, db);
     const ip = '10.0.0.3';
 
-    const state = await startLogin(app, ip);
+    const { state } = await startLogin(app, ip);
     const denied = await call(app, 'GET', `/auth/google/callback?error=access_denied&state=${state}`, ip);
     assert.equal(denied.status, 200);
     assert.match(denied.body, /recusou/i);
 
-    const polled = await call(app, 'GET', `/auth/google/code?state=${state}`, ip);
+    const polled = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, JSON.stringify({ state }));
     assert.deepEqual(JSON.parse(polled.body), { error: 'access_denied' });
     await app.close();
   });
@@ -524,7 +554,7 @@ describe('fluxo OAuth do backend', () => {
     const { db } = createFakeDb();
     const app = await createAppServer(config, db);
 
-    const response = await call(app, 'GET', '/auth/google/code', '10.0.0.4');
+    const response = await call(app, 'POST', '/auth/google/code', '10.0.0.4');
 
     assert.equal(response.status, 400);
     await app.close();
@@ -536,8 +566,9 @@ describe('fluxo OAuth do backend', () => {
     const ip = '10.0.0.5';
 
     const statuses: number[] = [];
+    const codeChallenge = pkceChallenge(randomBytes(32).toString('hex'));
     for (let attempt = 0; attempt < 31; attempt += 1) {
-      statuses.push((await call(app, 'POST', '/auth/google/start', ip)).status);
+      statuses.push((await call(app, 'POST', '/auth/google/start', ip, undefined, undefined, JSON.stringify({ codeChallenge }))).status);
     }
 
     assert.equal(statuses.slice(0, 30).every((status) => status === 200), true);

@@ -18,7 +18,9 @@ export async function writeVault(db: Db, userId: string, incoming: VaultRecord[]
       const current = (await client.query<{ updated_at: string }>('SELECT updated_at FROM atmail_vault_records WHERE user_id = $1 AND kind = $2 AND record_id = $3', [userId, record.kind, record.id])).rows[0];
       if (current && Number(current.updated_at) > record.updatedAt) continue;
       revision += 1;
-      await client.query(`INSERT INTO atmail_vault_records (user_id, kind, record_id, revision, updated_at, deleted, payload) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb) ON CONFLICT(user_id, kind, record_id) DO UPDATE SET revision=excluded.revision, updated_at=excluded.updated_at, deleted=excluded.deleted, payload=excluded.payload`, [userId, record.kind, record.id, revision, record.updatedAt, record.deleted === true, JSON.stringify(record.payload)]);
+      // `JSON.stringify(undefined)` devolveria undefined e violaria o NOT NULL.
+      const payload = JSON.stringify(record.payload ?? null) ?? 'null';
+      await client.query(`INSERT INTO atmail_vault_records (user_id, kind, record_id, revision, updated_at, deleted, payload) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb) ON CONFLICT(user_id, kind, record_id) DO UPDATE SET revision=excluded.revision, updated_at=excluded.updated_at, deleted=excluded.deleted, payload=excluded.payload`, [userId, record.kind, record.id, revision, record.updatedAt, record.deleted === true, payload]);
       applied += 1;
     }
     await client.query('INSERT INTO atmail_vault_meta (user_id, revision) VALUES ($1, $2) ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision', [userId, revision]);

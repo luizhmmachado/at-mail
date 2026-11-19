@@ -3,5 +3,13 @@
   "identifier": "default",
   "description": "Permissões mínimas do @mail desktop",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-title", "opener:default", "notification:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://accounts.google.com/*" }]
+    },
+    "notification:default"
+  ]
 }
