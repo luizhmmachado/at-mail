@@ -163,6 +163,77 @@ export function createDirectMessageSetupRequest(recipient: string, requestId: st
   };
 }
 
+export function chatReplyRequest(body: string, threadName?: string): { text: string; thread?: { name: string } } {
+  return threadName ? { text: body, thread: { name: threadName } } : { text: body };
+}
+
+export async function sendChatToSpace(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  input: { spaceName: string; threadName?: string; body: string }
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const url = new URL(`https://chat.googleapis.com/v1/${input.spaceName}/messages`);
+  url.searchParams.set('requestId', randomUUID());
+  if (input.threadName) url.searchParams.set('messageReplyOption', 'REPLY_MESSAGE_OR_FAIL');
+  await googleJsonRequest(url.toString(), token, {
+    method: 'POST',
+    body: JSON.stringify(chatReplyRequest(input.body, input.threadName))
+  });
+}
+
+export function chatReactionRequest(emoji: string): { emoji: { unicode: string } } {
+  return { emoji: { unicode: emoji } };
+}
+
+export async function createChatReaction(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  input: { messageName: string; emoji: string }
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  await googleJsonRequest(`https://chat.googleapis.com/v1/${input.messageName}/reactions`, token, {
+    method: 'POST',
+    body: JSON.stringify(chatReactionRequest(input.emoji))
+  });
+}
+
+export function chatSpaceReadStateUrl(spaceName: string): string {
+  return `https://chat.googleapis.com/v1/users/me/${spaceName}/spaceReadState`;
+}
+
+export function chatSpaceReadStateRequest(spaceName: string, lastReadTime: number): { name: string; lastReadTime: string } {
+  return {
+    name: `users/me/${spaceName}/spaceReadState`,
+    lastReadTime: new Date(lastReadTime).toISOString()
+  };
+}
+
+export function isChatMessageRead(receivedAt: number, lastReadTime: number, readStateAvailable: boolean): boolean {
+  return readStateAvailable && receivedAt <= lastReadTime;
+}
+
+export async function markChatSpaceRead(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  spaceName: string,
+  lastReadTime: number
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const url = new URL(chatSpaceReadStateUrl(spaceName));
+  url.searchParams.set('updateMask', 'lastReadTime');
+  await googleJsonRequest(url.toString(), token, {
+    method: 'PATCH',
+    body: JSON.stringify(chatSpaceReadStateRequest(spaceName, lastReadTime))
+  });
+}
+
 function decodeBase64Url(value: string | undefined): string {
   if (!value) return '';
   return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -215,12 +286,81 @@ export function gmailMessagesUrl(): string {
   return 'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50';
 }
 
-export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[] }> {
+export function gmailHistoryUrl(startHistoryId: string, pageToken?: string): string {
+  const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
+  url.searchParams.set('startHistoryId', startHistoryId);
+  url.searchParams.set('historyTypes', 'messageAdded');
+  if (pageToken) url.searchParams.set('pageToken', pageToken);
+  return url.toString();
+}
+
+export function gmailAddedMessageIds(history: any): string[] {
+  const ids = new Set<string>();
+  for (const record of history.history ?? []) {
+    for (const addition of record.messagesAdded ?? []) {
+      const id = addition.message?.id;
+      if (typeof id === 'string') ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+function newerHistoryId(current: string, candidate: unknown): string {
+  if (typeof candidate !== 'string' || candidate.length === 0) return current;
+  if (current.length === 0) return candidate;
+  try {
+    return BigInt(candidate) > BigInt(current) ? candidate : current;
+  } catch {
+    return current;
+  }
+}
+
+async function mapWithConcurrency<T, R>(values: readonly T[], concurrency: number, map: (value: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const value = values[index];
+      if (value !== undefined) results[index] = await map(value);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
+}
+
+export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
-  const list = await googleJson(gmailMessagesUrl(), token);
-  const messages: MailMessage[] = [];
-  for (const item of list.messages ?? []) {
-    const message = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${item.id}?format=full`, token);
+  let messageIds: string[] | undefined;
+  let nextCursor = '';
+
+  if (cursor) {
+    try {
+      const addedIds = new Set<string>();
+      let pageToken: string | undefined;
+      do {
+        const history = await googleJson(gmailHistoryUrl(cursor, pageToken), token);
+        nextCursor = newerHistoryId(nextCursor, history.historyId);
+        for (const id of gmailAddedMessageIds(history)) addedIds.add(id);
+        pageToken = history.nextPageToken;
+      } while (pageToken);
+      messageIds = [...addedIds];
+      if (messageIds.length === 0) return { messages: [], cursor: nextCursor || cursor, removedIds: [] };
+    } catch (error) {
+      if ((error as Error & { status?: number }).status !== 404) throw error;
+      messageIds = undefined;
+      nextCursor = '';
+    }
+  }
+
+  if (messageIds === undefined) {
+    const list = await googleJson(gmailMessagesUrl(), token);
+    messageIds = (list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string');
+  }
+
+  const messages = await mapWithConcurrency(messageIds ?? [], 8, async (id) => {
+    const message = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token);
     const payload = message.payload ?? {};
     const headers = payload.headers ?? [];
     const from = header(headers, 'From') || 'Google Gmail';
@@ -230,9 +370,15 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     const labels: string[] = message.labelIds ?? [];
     const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
     const bodies = extractGmailBodies(payload);
-    messages.push({ id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email', participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] });
+    nextCursor = newerHistoryId(nextCursor, message.historyId);
+    return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
+  });
+
+  if (nextCursor.length === 0) {
+    const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
+    nextCursor = typeof profile.historyId === 'string' ? profile.historyId : '';
   }
-  return { messages, cursor: '', removedIds: [] };
+  return { messages, cursor: nextCursor, removedIds: [] };
 }
 
 export function resolveChatSpaceName(
@@ -266,6 +412,7 @@ export function chatMessagesUrl(spaceName: string): string {
   const url = new URL(`https://chat.googleapis.com/v1/${spaceName}/messages`);
   url.searchParams.set('pageSize', '100');
   url.searchParams.set('orderBy', 'createTime desc');
+  url.searchParams.set('fields', 'messages(name,text,createTime,sender(name,displayName,email,avatarUrl),thread(name),emojiReactionSummaries(emoji(unicode),reactionCount)),nextPageToken');
   return url.toString();
 }
 
@@ -281,24 +428,44 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
       const index = nextIndex;
       nextIndex += 1;
       const space = spaceList[index];
-      if (space !== undefined) pages[index] = await googleJson(chatMessagesUrl(space.name), token);
+      if (space === undefined) continue;
+      const messagePage = await googleJson(chatMessagesUrl(space.name), token);
+      let lastReadTime = 0;
+      let readStateAvailable = true;
+      try {
+        const readState = await googleJson(chatSpaceReadStateUrl(space.name), token);
+        lastReadTime = Date.parse(readState.lastReadTime ?? '') || 0;
+      } catch (error) {
+        const status = (error as Error & { status?: number }).status;
+        if (status === 403) readStateAvailable = false;
+        else if (status !== 404) throw error;
+      }
+      pages[index] = { messagePage, lastReadTime, readStateAvailable };
     }
   };
   await Promise.all(Array.from({ length: Math.min(5, spaceList.length) }, fetchWorker));
   const messages: MailMessage[] = [];
   for (let index = 0; index < spaceList.length; index += 1) {
     const space = spaceList[index];
-    const page = pages[index];
-    if (space === undefined || page === undefined) continue;
+    const result = pages[index];
+    if (space === undefined || result === undefined) continue;
+    const page = result.messagePage;
     const spaceName = resolveChatSpaceName(space, page.messages ?? [], userId, currentUser?.name);
     for (const item of page.messages ?? []) {
       const sender = item.sender?.displayName ?? 'Google Chat';
+      const receivedAt = Date.parse(item.createTime ?? '') || Date.now();
       const participant = {
         name: sender,
         email: item.sender?.email ?? sender,
         ...(typeof item.sender?.avatarUrl === 'string' ? { avatarUrl: item.sender.avatarUrl } : {})
       };
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt: Date.parse(item.createTime ?? '') || Date.now(), isRead: true, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE' });
+      const reactions = (item.emojiReactionSummaries ?? []).flatMap((reaction: any) => {
+        const emoji = reaction.emoji?.unicode;
+        return typeof emoji === 'string' && emoji.length > 0
+          ? [{ emoji, count: Number(reaction.reactionCount) || 0 }]
+          : [];
+      });
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead: item.sender?.name === 'users/me' || isChatMessageRead(receivedAt, result.lastReadTime, result.readStateAvailable), isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(item.thread?.name ? { threadName: item.thread.name } : {}), reactions });
     }
   }
   return { messages, removedIds: [] };

@@ -21,6 +21,27 @@ function storeWithSeed() {
 }
 
 describe('sync por canal', () => {
+  it('notifica apenas mensagens novas após o sync inicial', async () => {
+    const seed = createSeedData(NOW);
+    const emailAccount = seed.accounts.find((account) => account.channel === 'email');
+    const message = seed.messages.find((item) => item.channel === 'email');
+    assert.ok(emailAccount !== undefined);
+    assert.ok(message !== undefined && message.channel === 'email');
+    const account = { ...emailAccount, lastSyncedAt: NOW - 1_000 };
+    const store = createAppStore({ contexts: seed.contexts, accounts: [account] });
+    let notified = 0;
+    const engine = new SyncEngine({
+      store,
+      adapters: [{ provider: 'gmail', channel: 'email', async fetchSince() { return { messages: [{ ...message, receivedAt: NOW }], removedIds: [] }; } }],
+      onNewMessages: (_account, messages) => { notified += messages.length; }
+    });
+
+    await engine.syncAccount(account.id);
+    await engine.syncAccount(account.id);
+
+    assert.equal(notified, 1);
+  });
+
   it('sincroniza apenas as contas do canal solicitado', async () => {
     const seed = createSeedData(NOW);
     const store = createAppStore({ contexts: seed.contexts, accounts: seed.accounts });
@@ -106,6 +127,17 @@ describe('contextos', () => {
       contexts.map((context) => context.order),
       [0, 1, 2]
     );
+  });
+
+  it('remove a conta conectada e as mensagens associadas', () => {
+    const store = storeWithSeed();
+    const account = store.getSnapshot().accounts[0];
+    assert.ok(account !== undefined);
+
+    store.actions.removeAccount(account.id);
+
+    assert.equal(store.accountFor(account.id), undefined);
+    assert.ok(store.getSnapshot().messages.every((message) => message.accountId !== account.id));
   });
 
   it('conta não lidas por contexto ignorando arquivadas', () => {

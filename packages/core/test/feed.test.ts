@@ -106,6 +106,22 @@ describe('construção do feed unificado', () => {
     assert.equal(chat[0]?.flags.isMentioned, true);
   });
 
+  it('preserva o avatar do participante ao agrupar mensagens de Chat', () => {
+    const messages = fixture();
+    const chat = messages.find(isChatMessage);
+    assert.ok(chat !== undefined);
+    const withAvatar = {
+      ...chat,
+      id: brand.message('m5'),
+      participants: [{ ...chat.participants[0]!, avatarUrl: 'https://example.com/avatar.png' }],
+      receivedAt: NOW
+    };
+
+    const thread = buildUnifiedThreads([...messages, withAvatar]).find((item) => item.channel === 'chat');
+
+    assert.equal(thread?.participants[0]?.avatarUrl, 'https://example.com/avatar.png');
+  });
+
   it('ordena por atividade mais recente', () => {
     const threads = buildUnifiedThreads(fixture());
     const timestamps = threads.map((thread) => thread.lastActivityAt);

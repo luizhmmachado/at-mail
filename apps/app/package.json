@@ -16,6 +16,7 @@
     "@expo/metro-runtime": "~58.0.17",
     "@mail/core": "0.1.0",
     "@mail/ui": "0.1.0",
+    "@tauri-apps/plugin-notification": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.3",
     "expo": "~58.0.26",
     "expo-crypto": "~58.0.8",

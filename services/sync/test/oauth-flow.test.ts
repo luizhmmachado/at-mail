@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';
-import type { Pool, QueryResultRow } from 'pg';
+import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { chatMessagesUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailMessagesUrl, resolveChatSpaceName } from '../src/providers';
+import { chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -27,6 +27,26 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('responde no espaço/thread existente e cria reações com emoji Unicode', () => {
+    assert.deepEqual(chatReplyRequest('Olá', 'spaces/space-1/threads/thread-1'), {
+      text: 'Olá',
+      thread: { name: 'spaces/space-1/threads/thread-1' }
+    });
+    assert.deepEqual(chatReactionRequest('👍'), { emoji: { unicode: '👍' } });
+  });
+
+  it('constrói o read-state do Google Chat no caminho users/me', () => {
+    const url = chatSpaceReadStateUrl('spaces/space-1');
+    assert.equal(url, 'https://chat.googleapis.com/v1/users/me/spaces/space-1/spaceReadState');
+    assert.deepEqual(chatSpaceReadStateRequest('spaces/space-1', 1_700_000_000_000), {
+      name: 'users/me/spaces/space-1/spaceReadState',
+      lastReadTime: new Date(1_700_000_000_000).toISOString()
+    });
+    assert.equal(isChatMessageRead(1_699_999_999_000, 1_700_000_000_000, true), true);
+    assert.equal(isChatMessageRead(1_700_000_001_000, 1_700_000_000_000, true), false);
+    assert.equal(isChatMessageRead(1_699_999_999_000, 1_700_000_000_000, false), false);
+  });
+
   it('inclui destinatário e requestId no corpo de setup do DM', () => {
     assert.deepEqual(createDirectMessageSetupRequest('pessoa@example.com', 'request-1'), {
       requestId: 'request-1',
@@ -41,6 +61,8 @@ describe('nome de espaços do Google Chat', () => {
     assert.equal(url.pathname, '/v1/spaces/example/messages');
     assert.equal(url.searchParams.get('pageSize'), '100');
     assert.equal(url.searchParams.get('orderBy'), 'createTime desc');
+    assert.match(url.searchParams.get('fields') ?? '', /sender\(.*avatarUrl/);
+    assert.match(url.searchParams.get('fields') ?? '', /emojiReactionSummaries/);
   });
 
   it('usa o nome do outro participante quando o DM não tem displayName', () => {
@@ -75,6 +97,17 @@ describe('sincronização do Gmail', () => {
 
     assert.equal(url.searchParams.get('maxResults'), '50');
     assert.equal(url.searchParams.has('pageToken'), false);
+  });
+
+  it('consulta historyId e deduplica as mensagens adicionadas', () => {
+    const url = new URL(gmailHistoryUrl('12345', 'next-page'));
+    assert.equal(url.searchParams.get('startHistoryId'), '12345');
+    assert.equal(url.searchParams.get('historyTypes'), 'messageAdded');
+    assert.equal(url.searchParams.get('pageToken'), 'next-page');
+    assert.deepEqual(gmailAddedMessageIds({ history: [
+      { messagesAdded: [{ message: { id: 'm1' } }, { message: { id: 'm2' } }] },
+      { messagesAdded: [{ message: { id: 'm1' } }] }
+    ] }), ['m1', 'm2']);
   });
 });
 
@@ -140,11 +173,20 @@ describe('montagem MIME do e-mail', () => {
 });
 
 /** Banco de mentira: só as quatro consultas que o fluxo de login realmente usa. */
-function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<string, { userId: string; contextId: string; provider?: string; channel?: string }> } {
+function createFakeDb(): {
+  db: Db;
+  rows: Map<string, PendingRow>;
+  accounts: Map<string, { userId: string; contextId: string; provider?: string; channel?: string; email?: string }>;
+  notifications: Map<string, boolean>;
+  credentials: Set<string>;
+} {
   const rows = new Map<string, PendingRow>();
-  const accounts = new Map<string, { userId: string; contextId: string; provider?: string; channel?: string }>();
+  const accounts = new Map<string, { userId: string; contextId: string; provider?: string; channel?: string; email?: string }>();
+  const notifications = new Map<string, boolean>();
+  const credentials = new Set<string>();
 
-  const db: Db = {
+  let db: Db;
+  db = {
     pool: null as unknown as Pool,
     async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = []): Promise<{ rows: T[] }> {
       if (text.startsWith('SELECT user_id, expires_at FROM atmail_sessions')) {
@@ -156,6 +198,10 @@ function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<
         const account = accounts.get(accountId);
         if (!account || account.userId !== userId) return { rows: [] };
         return { rows: [{ provider: account.provider ?? 'gmail', channel: account.channel ?? 'email' } as unknown as T] };
+      }
+      if (text.startsWith('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2')) {
+        const [accountId, userId] = values as [string, string];
+        return { rows: accounts.get(accountId)?.userId === userId ? [{ id: accountId } as unknown as T] : [] };
       }
       if (text.startsWith('SELECT id FROM atmail_accounts WHERE id = ANY')) {
         const [accountIds, userId] = values as [string[], string];
@@ -172,6 +218,25 @@ function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<
           updated.push({ id: accountId } as unknown as T);
         }
         return { rows: updated };
+      }
+      if (text.startsWith('INSERT INTO atmail_notification_preferences')) {
+        const [userId, accountId, enabled] = values as [string, string, boolean];
+        notifications.set(`${userId}:${accountId}`, enabled);
+        return { rows: [] };
+      }
+      if (text.startsWith('DELETE FROM atmail_notification_preferences')) {
+        notifications.delete(`${String(values[0])}:${String(values[1])}`);
+        return { rows: [] };
+      }
+      if (text.startsWith('DELETE FROM atmail_credentials')) {
+        credentials.delete(String(values[1]));
+        return { rows: [] };
+      }
+      if (text.startsWith('DELETE FROM atmail_accounts WHERE user_id = $1 AND id = $2')) {
+        const [userId, accountId] = values as [string, string];
+        if (accounts.get(accountId)?.userId !== userId) return { rows: [] };
+        accounts.delete(accountId);
+        return { rows: [{ id: accountId } as unknown as T] };
       }
       if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE created_at <')) {
         const cutoff = Number(values[0]);
@@ -203,13 +268,14 @@ function createFakeDb(): { db: Db; rows: Map<string, PendingRow>; accounts: Map<
       }
       throw new Error(`consulta não suportada pelo banco de teste: ${text}`);
     },
-    transaction: (() => {
-      throw new Error('transação não usada no fluxo OAuth');
-    }) as unknown as Db['transaction'],
+    async transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+      const client = { query: (text: string, values: unknown[] = []) => db.query(text, values) } as unknown as PoolClient;
+      return callback(client);
+    },
     close: async () => undefined
   };
 
-  return { db, rows, accounts };
+  return { db, rows, accounts, notifications, credentials };
 }
 
 interface ResponseSnapshot {
@@ -220,7 +286,7 @@ interface ResponseSnapshot {
 
 async function call(
   app: AppServer,
-  method: 'GET' | 'POST' | 'OPTIONS',
+  method: 'GET' | 'POST' | 'OPTIONS' | 'DELETE',
   path: string,
   ip: string,
   origin?: string,
@@ -266,6 +332,32 @@ async function startLogin(app: AppServer, ip: string, platform?: string, origin?
 }
 
 describe('fluxo OAuth do backend', () => {
+  it('persiste preferência de notificações por conta', async () => {
+    const { db, accounts, notifications } = createFakeDb();
+    accounts.set('gmail-account', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email', email: 'pessoa@example.com' });
+    const app = await createAppServer(config, db);
+
+    const response = await call(app, 'POST', '/accounts/notifications', '10.0.0.21', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'gmail-account', enabled: false }));
+
+    assert.equal(response.status, 200);
+    assert.equal(notifications.get('user-1:gmail-account'), false);
+    await app.close();
+  });
+
+  it('remove a conta e suas credenciais somente para seu proprietário', async () => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-account', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-account');
+    const app = await createAppServer(config, db);
+
+    const response = await call(app, 'DELETE', '/accounts/gmail-account', '10.0.0.22', undefined, 'Bearer test-session');
+
+    assert.equal(response.status, 200);
+    assert.equal(accounts.has('gmail-account'), false);
+    assert.equal(credentials.has('gmail-account'), false);
+    await app.close();
+  });
+
   it('persiste o contexto apenas nas contas autenticadas e válidas', async () => {
     const { db, accounts } = createFakeDb();
     accounts.set('gmail-account', { userId: 'user-1', contextId: 'work' });

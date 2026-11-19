@@ -44,13 +44,18 @@ export function groupingKey(message: MailMessage): ThreadId {
 
 function mergeParticipants(existing: Participant[], incoming: Participant[]): Participant[] {
   if (incoming.length === 0) return existing;
-  const seen = new Set(existing.map((participant) => participant.email.toLowerCase()));
   const merged = existing.slice();
   for (const participant of incoming) {
     const key = participant.email.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(participant);
+    const existingIndex = merged.findIndex((current) => current.email.toLowerCase() === key);
+    if (existingIndex < 0) {
+      merged.push(participant);
+      continue;
+    }
+    const current = merged[existingIndex];
+    if (current !== undefined && current.avatarUrl === undefined && participant.avatarUrl !== undefined) {
+      merged[existingIndex] = { ...current, avatarUrl: participant.avatarUrl };
+    }
   }
   return merged;
 }

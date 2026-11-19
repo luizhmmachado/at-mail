@@ -5,6 +5,7 @@ import { SyncError, type MailboxAdapter } from './types';
 export interface SyncEngineOptions {
   store: AppStore;
   adapters?: MailboxAdapter[];
+  onNewMessages?: (account: Account, messages: readonly import('../domain/models').MailMessage[]) => void;
   /** Máximo de contas sincronizadas em paralelo (protege CPU e quota de API). */
   concurrency?: number;
   now?: () => number;
@@ -29,6 +30,7 @@ export class SyncEngine {
   private readonly adapters = new Map<string, MailboxAdapter>();
   private readonly concurrency: number;
   private readonly now: () => number;
+  private readonly onNewMessages?: SyncEngineOptions['onNewMessages'];
   private readonly runningAccounts = new Map<AccountId, Promise<SyncOutcome>>();
   private readonly accountSyncVersions = new Map<AccountId, number>();
   private activeSyncRuns = 0;
@@ -37,6 +39,7 @@ export class SyncEngine {
     this.store = options.store;
     this.concurrency = Math.max(1, options.concurrency ?? 3);
     this.now = options.now ?? Date.now;
+    this.onNewMessages = options.onNewMessages;
     for (const adapter of options.adapters ?? []) this.register(adapter);
   }
 
@@ -127,8 +130,18 @@ export class SyncEngine {
 
     try {
       const page = await adapter.fetchSince(account, account.syncCursor);
+      if (this.store.accountFor(account.id) === undefined) {
+        return { accountId: account.id, newMessages: 0, ok: true };
+      }
+      const knownIds = new Set(this.store.getSnapshot().messages.map((message) => message.id));
+      const newMessages = page.messages.filter((message) => !knownIds.has(message.id));
       this.store.actions.removeMessages(page.removedIds);
       this.store.actions.upsertMessages(page.messages);
+      if (account.lastSyncedAt !== undefined && newMessages.length > 0) {
+        try {
+          this.onNewMessages?.(account, newMessages.filter((message) => message.receivedAt > (account.lastSyncedAt ?? 0)));
+        } catch {}
+      }
       this.markAccount(account.id, {
         status: page.requiresReauth === true ? 'reauth-required' : 'connected',
         syncCursor: page.nextCursor ?? account.syncCursor,

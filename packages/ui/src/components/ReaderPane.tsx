@@ -6,6 +6,7 @@ import {
   isEmailMessage,
   threadParticipantsLabel,
   type Attachment,
+  type ChatMessage,
   type MailMessage,
   type UnifiedThread
 } from '@mail/core';
@@ -25,16 +26,17 @@ export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
   onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
+  onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
 }
 
 /**
  * Coluna de leitura de 1016 px do frame `@mail · Desktop`.
- *
  * Barra de ações de 72 px, título de 28/45 com 38 px de respiro depois da barra,
  * etiqueta de 26 px, mensagens anteriores em cartão de 74 px e a última mensagem
  * aberta, com o compositor de 132 px ao pé da coluna.
  */
-export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactElement {
+
+export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPaneProps): ReactElement {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
@@ -210,7 +212,7 @@ export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactEl
 
         <View style={{ marginTop: isChatThread ? 0 : mobile ? theme.space[5] : theme.space[8], gap: theme.space[6] }}>
           {isChatThread ? (
-            <ChatTimeline messages={messages} />
+            <ChatTimeline messages={messages} onReactChat={onReactChat} />
           ) : (
             messages.map((message, index) =>
               index === messages.length - 1 ? (
@@ -524,7 +526,7 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
   );
 }
 
-function ChatTimeline({ messages }: { messages: readonly MailMessage[] }): ReactElement {
+function ChatTimeline({ messages, onReactChat }: { messages: readonly MailMessage[]; onReactChat?: ReaderPaneProps['onReactChat'] }): ReactElement {
   const theme = useTheme();
   return (
     <View style={{ gap: theme.space[1] }}>
@@ -539,6 +541,7 @@ function ChatTimeline({ messages }: { messages: readonly MailMessage[] }): React
           senderName(previousChat) !== senderName(message) ||
           message.receivedAt - previousChat.receivedAt >= 5 * 60_000;
         const name = senderName(message);
+        const avatarUrl = message.participants[0]?.avatarUrl;
 
         return (
           <View key={message.id}>
@@ -561,11 +564,18 @@ function ChatTimeline({ messages }: { messages: readonly MailMessage[] }): React
                   backgroundColor: startsNewGroup ? theme.colors.accentMuted : 'transparent'
                 }}
               >
-                {startsNewGroup && (
+                {startsNewGroup && avatarUrl ? (
+                  <Image
+                    accessibilityLabel={`Foto de ${name}`}
+                    source={{ uri: avatarUrl }}
+                    resizeMode="cover"
+                    style={{ width: 30, height: 30, borderRadius: theme.radius.pill }}
+                  />
+                ) : startsNewGroup ? (
                   <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.accent }}>
                     {senderInitials(name)}
                   </Text>
-                )}
+                ) : null}
               </View>
 
               <View style={{ flexShrink: 1, maxWidth: '90%' }}>
@@ -602,12 +612,78 @@ function ChatTimeline({ messages }: { messages: readonly MailMessage[] }): React
                     color={theme.colors.textPrimary}
                     flush
                   />
+                  <ChatReactionControls message={message} onReactChat={onReactChat} />
                 </View>
               </View>
             </View>
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function ChatReactionControls({ message, onReactChat }: { message: ChatMessage; onReactChat?: ReaderPaneProps['onReactChat'] }): ReactElement | null {
+  const theme = useTheme();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [sendingEmoji, setSendingEmoji] = useState<string>();
+  const [error, setError] = useState<string>();
+  if (onReactChat === undefined) return null;
+  const reactMessage: NonNullable<ReaderPaneProps['onReactChat']> = onReactChat;
+
+  async function addReaction(emoji: string): Promise<void> {
+    if (sendingEmoji !== undefined) return;
+    setSendingEmoji(emoji);
+    setError(undefined);
+    try {
+      await reactMessage(message, emoji);
+      setPickerOpen(false);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Não foi possível reagir à mensagem.');
+    } finally {
+      setSendingEmoji(undefined);
+    }
+  }
+
+  return (
+    <View style={{ marginTop: theme.space[2] }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space[1] }}>
+        {message.reactions?.map((reaction) => (
+          <Pressable
+            key={reaction.emoji}
+            accessibilityRole="button"
+            accessibilityLabel={`Reagir com ${reaction.emoji}, ${reaction.count} reações`}
+            disabled={sendingEmoji !== undefined}
+            onPress={() => void addReaction(reaction.emoji)}
+            style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, borderRadius: theme.radius.pill, backgroundColor: theme.colors.surface, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle }}
+          >
+            <Text>{reaction.emoji}</Text>
+            <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>{reaction.count}</Text>
+          </Pressable>
+        ))}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Adicionar reação"
+          accessibilityState={{ expanded: pickerOpen }}
+          onPress={() => setPickerOpen((open) => !open)}
+          style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.pill, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle }}
+        >
+          <Glyph name="plus" size={14} color={theme.colors.textSecondary} />
+        </Pressable>
+        {pickerOpen && ['👍', '❤️', '😂', '🎉', '🙏'].map((emoji) => (
+          <Pressable
+            key={emoji}
+            accessibilityRole="button"
+            accessibilityLabel={`Reagir com ${emoji}`}
+            disabled={sendingEmoji !== undefined}
+            onPress={() => void addReaction(emoji)}
+            style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.pill, backgroundColor: theme.colors.surface }}
+          >
+            <Text>{emoji}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {error !== undefined && <Text accessibilityRole="alert" style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.danger, marginTop: 4 }}>{error}</Text>}
     </View>
   );
 }
