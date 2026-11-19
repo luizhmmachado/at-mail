@@ -1,6 +1,8 @@
 import { brand } from '@mail/core';
 import type { AccountId, ChatMessage, ContextId, EmailMessage, MailMessage, MailboxAdapter, SendRequest, SyncPage } from '@mail/core';
 import { apiFetch } from '../auth';
+import { parseChatSendReceipt } from '../chat-send-receipt';
+import type { ChatSendReceipt } from '../chat-send-receipt';
 
 export interface SyncEnvelopeDto {
   messages: RawMessageDto[];
@@ -100,7 +102,7 @@ export async function sendEmail(accountId: string, request: SendRequest & { atta
   if (!response.ok) throw new Error((await response.text()).slice(0, 240));
 }
 
-export async function sendChatMessage(accountId: string, recipient: string, body: string): Promise<ChatSendReceipt> {
+export async function sendChatMessage(accountId: string, recipient: string, body: string): Promise<ChatSendReceipt | undefined> {
   const response = await apiFetch('/messages/send-chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -110,7 +112,7 @@ export async function sendChatMessage(accountId: string, recipient: string, body
   return readChatSendReceipt(response);
 }
 
-export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string): Promise<ChatSendReceipt> {
+export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string): Promise<ChatSendReceipt | undefined> {
   const response = await apiFetch('/messages/send-chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -120,19 +122,9 @@ export async function sendChatReply(accountId: string, spaceId: string, threadNa
   return readChatSendReceipt(response);
 }
 
-async function readChatSendReceipt(response: Response): Promise<ChatSendReceipt> {
-  const result = await response.json().catch(() => undefined) as Partial<ChatSendReceipt> | undefined;
-  if (
-    typeof result?.messageName !== 'string' ||
-    !/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+$/.test(result.messageName) ||
-    typeof result.spaceResourceName !== 'string' ||
-    !/^spaces\/[A-Za-z0-9._-]+$/.test(result.spaceResourceName) ||
-    typeof result.receivedAt !== 'number' ||
-    !Number.isFinite(result.receivedAt)
-  ) {
-    throw new Error('O Google Chat não retornou os dados da mensagem enviada.');
-  }
-  return { messageName: result.messageName, spaceResourceName: result.spaceResourceName, receivedAt: result.receivedAt };
+async function readChatSendReceipt(response: Response): Promise<ChatSendReceipt | undefined> {
+  const result = await response.json().catch(() => undefined);
+  return parseChatSendReceipt(result);
 }
 
 export async function addChatReaction(accountId: string, messageId: string, emoji: string): Promise<void> {

@@ -94,7 +94,9 @@ export default function App() {
       try {
         const receipt = await sendChatReply(last.accountId, last.spaceId, undefined, body);
         store.actions.removeMessages([optimisticMessage.id]);
-        store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt)]);
+        if (receipt !== undefined) {
+          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt)]);
+        }
       } catch (error) {
         store.actions.removeMessages([optimisticMessage.id]);
         throw error;
@@ -169,7 +171,9 @@ export default function App() {
       try {
         const receipt = await sendChatMessage(message.accountId, recipient, message.body);
         store.actions.removeMessages([optimisticMessage.id]);
-        store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
+        if (receipt !== undefined) {
+          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
+        }
       } catch (error) {
         store.actions.removeMessages([optimisticMessage.id]);
         throw error;
