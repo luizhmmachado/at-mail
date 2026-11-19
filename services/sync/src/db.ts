@@ -8,7 +8,7 @@ export interface Db {
 }
 
 export async function openDb(connectionString: string): Promise<Db> {
-  const pool = new Pool({ connectionString, max: 5, ssl: { rejectUnauthorized: false } });
+  const pool = new Pool({ connectionString, max: 1, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000, allowExitOnIdle: true, ssl: { rejectUnauthorized: false } });
   await pool.query(`
     CREATE TABLE IF NOT EXISTS atmail_users (id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT, picture TEXT, created_at BIGINT NOT NULL);
     CREATE TABLE IF NOT EXISTS atmail_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL);

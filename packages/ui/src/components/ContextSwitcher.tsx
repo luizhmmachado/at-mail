@@ -148,10 +148,12 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts, 
     if (onSetAccountNotifications === undefined) return;
     setSavingGroup(account.id);
     setError(undefined);
+    const previousValue = account.notificationsEnabled !== false;
+    actions.registerAccount({ ...account, notificationsEnabled: enabled });
     try {
       await onSetAccountNotifications(account.id, enabled);
-      actions.registerAccount({ ...account, notificationsEnabled: enabled });
     } catch (failure) {
+      actions.registerAccount({ ...account, notificationsEnabled: previousValue });
       setError(failure instanceof Error ? failure.message : 'Não foi possível salvar as notificações.');
     } finally {
       setSavingGroup(undefined);
