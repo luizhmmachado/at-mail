@@ -1,4 +1,4 @@
-import { createElement, useMemo, useRef, useState, type ReactElement } from 'react';
+import { createElement, useMemo, useRef, useState, type ComponentRef, type ReactElement } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
@@ -41,7 +41,7 @@ export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactEl
   const actions = useMailActions();
   const messages = useSelectedThreadMessages();
   const { feed } = useFeed();
-  const readerScrollRef = useRef<ScrollView | null>(null);
+  const readerScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
