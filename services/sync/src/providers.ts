@@ -222,15 +222,44 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
   return { messages, cursor: list.nextPageToken, removedIds: [] };
 }
 
+export function resolveChatSpaceName(
+  space: { name?: string; displayName?: string; spaceType?: string },
+  messages: readonly { sender?: { name?: string; displayName?: string } }[],
+  userId: string,
+  currentUserName?: string | null
+): string {
+  const displayName = space.displayName?.trim();
+  if (displayName) return displayName;
+
+  const ownName = currentUserName?.trim().toLocaleLowerCase();
+  const participantNames = new Set<string>();
+  for (const message of messages) {
+    const sender = message.sender;
+    const name = sender?.displayName?.trim();
+    if (!name || sender?.name === 'users/me' || sender?.name === `users/${userId}`) continue;
+    if (ownName && name.toLocaleLowerCase() === ownName) continue;
+    participantNames.add(name);
+  }
+
+  if (participantNames.size > 0) {
+    return space.spaceType === 'DIRECT_MESSAGE'
+      ? participantNames.values().next().value ?? space.name ?? 'Chat'
+      : [...participantNames].join(', ');
+  }
+  return space.name ?? 'Chat';
+}
+
 export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
+  const currentUser = (await db.query<{ name: string | null }>('SELECT name FROM atmail_users WHERE id = $1', [userId])).rows[0];
   const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
   const messages: MailMessage[] = [];
   for (const space of spaces.spaces ?? []) {
     const page = await googleJson(`https://chat.googleapis.com/v1/${space.name}/messages?pageSize=100`, token);
+    const spaceName = resolveChatSpaceName(space, page.messages ?? [], userId, currentUser?.name);
     for (const item of page.messages ?? []) {
       const sender = item.sender?.displayName ?? 'Google Chat';
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [{ name: sender, email: item.sender?.email ?? sender }], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt: Date.parse(item.createTime ?? '') || Date.now(), isRead: true, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName: space.displayName ?? space.name, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE' });
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [{ name: sender, email: item.sender?.email ?? sender }], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt: Date.parse(item.createTime ?? '') || Date.now(), isRead: true, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE' });
     }
   }
   return { messages, removedIds: [] };

@@ -5,7 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { createGmailRawMessage, extractGmailBodies } from '../src/providers';
+import { createGmailRawMessage, extractGmailBodies, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -25,6 +25,33 @@ const config: SyncConfig = {
   publicOrigins: ['http://localhost:8081', 'https://at-mail.vercel.app', 'http://tauri.localhost', 'tauri://localhost'],
   webAppOrigin: 'https://at-mail.vercel.app'
 };
+
+describe('nome de espaços do Google Chat', () => {
+  it('usa o nome do outro participante quando o DM não tem displayName', () => {
+    const name = resolveChatSpaceName(
+      { name: 'spaces/direct-message', displayName: '  ', spaceType: 'DIRECT_MESSAGE' },
+      [
+        { sender: { name: 'users/user-1', displayName: 'Luiz Machado' } },
+        { sender: { name: 'users/user-2', displayName: 'Luciano' } }
+      ],
+      'user-1',
+      'Luiz Machado'
+    );
+
+    assert.equal(name, 'Luciano');
+  });
+
+  it('prioriza o nome definido para o espaço', () => {
+    assert.equal(
+      resolveChatSpaceName(
+        { name: 'spaces/group', displayName: 'Engenharia', spaceType: 'GROUP_CHAT' },
+        [{ sender: { name: 'users/user-2', displayName: 'Luciano' } }],
+        'user-1'
+      ),
+      'Engenharia'
+    );
+  });
+});
 
 describe('montagem MIME do e-mail', () => {
   it('preserva o HTML original e não expõe CSS no texto de fallback', () => {
