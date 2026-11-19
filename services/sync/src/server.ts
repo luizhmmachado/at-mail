@@ -257,8 +257,15 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         }
         return json(res, 404, { error: 'rota não encontrada' }, headers);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'erro interno';
-        return json(res, 500, { error: message }, headers);
+        const detail = error instanceof Error ? error.message : 'erro interno';
+        const googleStatus = (error as Error & { status?: number }).status;
+        if (googleStatus === 403 && detail.toLowerCase().includes('insufficient authentication scopes')) {
+          return json(res, 403, { error: 'Permissões Google insuficientes. Adicione a conta novamente em Configurações para conceder os novos escopos de reação e leitura do Chat.' }, headers);
+        }
+        if (googleStatus === 404 && detail.includes('Google Chat app not found')) {
+          return json(res, 409, { error: 'Não há um DM existente para este destinatário. Para criar um novo, habilite a API Chat e configure o app Chat no Google Cloud.' }, headers);
+        }
+        return json(res, googleStatus ?? 500, { error: detail }, headers);
       }
     },
     close: () => db.close()

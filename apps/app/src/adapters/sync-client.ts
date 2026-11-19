@@ -100,7 +100,7 @@ export async function sendChatMessage(accountId: string, recipient: string, body
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, recipient, body })
   });
-  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+  if (!response.ok) throw new Error(await chatResponseError(response));
 }
 
 export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string): Promise<void> {
@@ -109,7 +109,7 @@ export async function sendChatReply(accountId: string, spaceId: string, threadNa
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, spaceId, threadName, body })
   });
-  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+  if (!response.ok) throw new Error(await chatResponseError(response));
 }
 
 export async function addChatReaction(accountId: string, messageId: string, emoji: string): Promise<void> {
@@ -118,7 +118,12 @@ export async function addChatReaction(accountId: string, messageId: string, emoj
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, messageId, emoji })
   });
-  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+  if (!response.ok) throw new Error(await chatResponseError(response));
+}
+
+async function chatResponseError(response: Response): Promise<string> {
+  const result = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
+  return typeof result?.error === 'string' ? result.error : `Não foi possível completar a operação do Chat (${response.status}).`;
 }
 
 export async function updateAccountContexts(accountIds: readonly AccountId[], contextId: ContextId): Promise<void> {
