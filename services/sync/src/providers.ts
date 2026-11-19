@@ -35,7 +35,11 @@ async function googleJson(url: string, token: string): Promise<any> {
 async function googleJsonRequest(url: string, token: string, init: RequestInit): Promise<any> {
   const response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers ?? {}) } });
   const json = await response.json() as any;
-  if (!response.ok) throw new Error(`Google API ${response.status}: ${JSON.stringify(json).slice(0, 240)}`);
+  if (!response.ok) {
+    const error = new Error(`Google API ${response.status}: ${JSON.stringify(json).slice(0, 240)}`);
+    (error as Error & { status?: number }).status = response.status;
+    throw error;
+  }
   return json;
 }
 
