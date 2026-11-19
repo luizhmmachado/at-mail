@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
+import { serverlessDatabaseUrl } from '../src/db';
 import type { Db } from '../src/db';
 import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
@@ -96,6 +97,20 @@ describe('nome de espaços do Google Chat', () => {
       ),
       'Engenharia'
     );
+  });
+});
+
+describe('conexão PostgreSQL serverless', () => {
+  it('usa transaction pooler do Supabase para hosts compartilhados', () => {
+    assert.equal(
+      new URL(serverlessDatabaseUrl('postgresql://user:pass@aws-0-region.pooler.supabase.com:5432/postgres')).port,
+      '6543'
+    );
+  });
+
+  it('mantém inalterada a conexão direta e os URLs já em transaction mode', () => {
+    assert.equal(new URL(serverlessDatabaseUrl('postgresql://user:pass@db.example.com:5432/postgres')).port, '5432');
+    assert.equal(new URL(serverlessDatabaseUrl('postgresql://user:pass@aws-0-region.pooler.supabase.com:6543/postgres')).port, '6543');
   });
 });
 
