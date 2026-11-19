@@ -15,7 +15,7 @@ import { Glyph } from './LucideGlyph';
 export interface ThreadRowProps {
   thread: UnifiedThread;
   selected: boolean;
-  showContextDot: boolean;
+  showContextIndicator: boolean;
   onPress: () => void;
   variant?: 'desktop' | 'mobile';
   isLast?: boolean;
@@ -31,7 +31,7 @@ export interface ThreadRowProps {
 export function ThreadRow({
   thread,
   selected,
-  showContextDot,
+  showContextIndicator,
   onPress,
   variant = 'desktop',
   isLast = false
@@ -45,7 +45,6 @@ export function ThreadRow({
   const context = snapshot.contexts.find((item) => item.id === primaryContextId);
   const accent = theme.colors[contextAccent(context?.kind ?? 'custom')];
   const unread = thread.unreadCount > 0;
-  const dotSize = mobile ? 5 : 6;
   const contentInset = mobile ? theme.layout.mobileRowContentInset : theme.layout.rowContentInset;
   const inset = theme.layout.rowDotInset;
 
@@ -99,11 +98,10 @@ export function ThreadRow({
             <View
               accessibilityLabel={context === undefined ? undefined : `Contexto ${context.name}`}
               style={{
-                width: dotSize,
-                height: dotSize,
-                borderRadius: theme.radius.pill,
+                width: 3,
+                height: mobile ? 20 : 18,
                 backgroundColor: accent,
-                opacity: showContextDot ? 1 : 0
+                opacity: showContextIndicator ? 1 : 0
               }}
             />
           </View>

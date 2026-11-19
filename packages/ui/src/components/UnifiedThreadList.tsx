@@ -205,7 +205,7 @@ export function UnifiedThreadList({ feed, onSelectThread, onCompose, onOpenSetti
           <ThreadRow
             thread={item}
             selected={snapshot.view.selectedThreadId === item.id}
-            showContextDot={snapshot.view.contextId === 'all'}
+            showContextIndicator={snapshot.view.contextId === 'all'}
             variant={mobile ? 'mobile' : 'desktop'}
             isLast={index === section.data.length - 1}
             onPress={() => onSelectThread(item.id)}
