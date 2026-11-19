@@ -79,7 +79,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
     messages: [],
     view: {
       contextId: ALL_CONTEXTS,
-      channel: 'all',
+      channel: 'email',
       sentOnly: false,
       query: '',
       unreadOnly: false,

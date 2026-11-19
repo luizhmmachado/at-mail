@@ -13,7 +13,6 @@ export type ShortcutAction =
   | 'context-work'
   | 'context-studies'
   | 'context-personal'
-  | 'channel-all'
   | 'channel-email'
   | 'channel-chat'
   | 'close';
@@ -38,7 +37,6 @@ export const SHORTCUTS: Record<ShortcutAction, KeyStroke> = {
   'context-work': { key: '2', alt: true },
   'context-studies': { key: '3', alt: true },
   'context-personal': { key: '4', alt: true },
-  'channel-all': { key: '0', meta: true },
   'channel-email': { key: '1', meta: true },
   'channel-chat': { key: '2', meta: true },
   close: { key: 'Escape' }
@@ -57,7 +55,6 @@ export const SHORTCUT_LABELS: Record<ShortcutAction, string> = {
   'context-work': 'Contexto: trabalho',
   'context-studies': 'Contexto: estudos',
   'context-personal': 'Contexto: pessoal',
-  'channel-all': 'Canal: tudo',
   'channel-email': 'Canal: e-mail',
   'channel-chat': 'Canal: chat',
   close: 'Fechar / cancelar'
@@ -76,7 +73,6 @@ const ACTION_ORDER: ShortcutAction[] = [
   'context-work',
   'context-studies',
   'context-personal',
-  'channel-all',
   'channel-email',
   'channel-chat',
   'close'

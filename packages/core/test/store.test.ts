@@ -75,6 +75,7 @@ describe('navegação e seleção', () => {
   it('aguarda seleção explícita ao abrir e sincronizar mensagens', () => {
     const seed = createSeedData(NOW);
     const store = createAppStore({ contexts: seed.contexts, accounts: seed.accounts });
+    assert.equal(store.getSnapshot().view.channel, 'email');
     assert.equal(store.getSnapshot().view.selectedThreadId, undefined);
 
     store.actions.upsertMessages(seed.messages);
@@ -212,6 +213,7 @@ describe('atalhos de teclado', () => {
     assert.equal(resolveShortcut(normalizeEvent({ key: 'r' })), 'reply');
     assert.equal(resolveShortcut(normalizeEvent({ key: 'k', metaKey: true })), 'search');
     assert.equal(resolveShortcut(normalizeEvent({ key: 'k', ctrlKey: true })), 'search');
+    assert.equal(resolveShortcut(normalizeEvent({ key: '0', ctrlKey: true })), undefined);
   });
 
   it('não dispara atalho sem modificador enquanto digita', () => {
