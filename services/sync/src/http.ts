@@ -25,7 +25,7 @@ export function cors(allowedOrigins: readonly string[], requestOrigin?: string):
     originHeaders['access-control-allow-origin'] = requestOrigin;
     originHeaders.vary = 'Origin';
   }
-  return { ...originHeaders, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
+  return { ...originHeaders, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS' };
 }
 
 export { createServer };
