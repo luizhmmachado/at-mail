@@ -87,8 +87,8 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const input = await body(req);
           const state = String(input.state ?? '').slice(0, 128);
           if (state.length === 0) return json(res, 400, { error: 'state obrigatório' }, headers);
-          // Leitura e remoção em uma única instrução: o code sai uma vez só.
-          const pending = (await db.query<{ code: string; error: string }>("DELETE FROM atmail_oauth_pending WHERE state = $1 AND created_at > $2 AND (code <> '' OR error <> '') RETURNING code, error", [state, Date.now() - PENDING_TTL_MS])).rows[0];
+          // Entrega uma vez só, preservando o vínculo PKCE até o exchange consumir a linha.
+          const pending = (await db.query<{ code: string; error: string }>("UPDATE atmail_oauth_pending SET code_delivered = TRUE WHERE state = $1 AND created_at > $2 AND code_delivered = FALSE AND (code <> '' OR error <> '') RETURNING code, error", [state, Date.now() - PENDING_TTL_MS])).rows[0];
           if (!pending) return json(res, 200, { pending: true }, headers);
           if (pending.error.length > 0) return json(res, 200, { error: pending.error }, headers);
           return json(res, 200, { code: pending.code }, headers);
