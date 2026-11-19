@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   formatThreadTime,
   groupByDate,
+  isChatMessage,
   isEmailMessage,
   matchesQuery,
   parseQuery,
@@ -223,9 +224,35 @@ describe('busca com operadores', () => {
     assert.ok(chatThread !== undefined);
     assert.ok(emailThread !== undefined);
 
-    assert.equal(matchesQuery(chatThread, 'preview'), true);
+    assert.equal(matchesQuery(chatThread, 'Engenharia'), true);
+    assert.equal(matchesQuery(chatThread, 'preview'), false);
+    assert.equal(matchesQuery(chatThread, 'Bruno'), false);
     assert.equal(matchesQuery(emailThread, 'bruno'), true);
     assert.equal(matchesQuery(emailThread, 'inexistente'), false);
+  });
+
+  it('busca conversas de chat pelo nome do grupo ou contato', () => {
+    const messages = fixture();
+    const originalChat = messages.find(isChatMessage);
+    assert.ok(originalChat !== undefined);
+    messages.push({
+      ...originalChat,
+      id: brand.message('m5'),
+      spaceId: brand.space('s2'),
+      spaceName: 'Bruno Salles',
+      isDirectMessage: true
+    });
+
+    const threads = buildUnifiedThreads(messages);
+    const group = threads.find((thread) => thread.subject === 'Engenharia');
+    const personal = threads.find((thread) => thread.subject === 'Bruno Salles');
+    assert.ok(group !== undefined);
+    assert.ok(personal !== undefined);
+
+    assert.equal(matchesQuery(group, 'Bruno'), false);
+    assert.equal(matchesQuery(personal, 'Bruno'), true);
+    assert.equal(matchesQuery(group, 'from:Bruno'), false);
+    assert.equal(matchesQuery(personal, 'from:Bruno'), true);
   });
 
   it('esconde threads arquivadas por padrão', () => {
