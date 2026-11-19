@@ -5,7 +5,7 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { chatMessagesUrl, createGmailRawMessage, extractGmailBodies, resolveChatSpaceName } from '../src/providers';
+import { chatMessagesUrl, createGmailRawMessage, extractGmailBodies, gmailMessagesUrl, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -58,6 +58,15 @@ describe('nome de espaços do Google Chat', () => {
       ),
       'Engenharia'
     );
+  });
+});
+
+describe('sincronização do Gmail', () => {
+  it('sempre consulta as mensagens mais recentes sem reaproveitar pageToken', () => {
+    const url = new URL(gmailMessagesUrl());
+
+    assert.equal(url.searchParams.get('maxResults'), '50');
+    assert.equal(url.searchParams.has('pageToken'), false);
   });
 });
 
