@@ -39,6 +39,7 @@ describe('nome de espaços do Google Chat', () => {
       text: 'Olá',
       thread: { name: 'spaces/space-1/threads/thread-1' }
     });
+    assert.deepEqual(chatReplyRequest('Olá'), { text: 'Olá' });
     assert.deepEqual(chatReactionRequest('👍'), { emoji: { unicode: '👍' } });
   });
 
