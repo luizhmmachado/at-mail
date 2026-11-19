@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { AppState, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -19,6 +19,8 @@ import { SignInScreen } from './src/SignInScreen';
 import { sendChatMessage, sendEmail, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
 import type { AccountId, ContextId, UnifiedThread } from '@mail/core';
+
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -125,7 +127,18 @@ export default function App() {
 
   useEffect(() => {
     if (DEMO_MODE || !authenticated) return;
-    void syncEngine.syncAll();
+    const syncIfActive = (): void => {
+      if (AppState.currentState === 'active') void syncEngine.syncAll();
+    };
+    syncIfActive();
+    const interval = setInterval(syncIfActive, SYNC_INTERVAL_MS);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') syncIfActive();
+    });
+    return () => {
+      clearInterval(interval);
+      subscription?.remove();
+    };
   }, [authenticated]);
 
   useEffect(() => {
