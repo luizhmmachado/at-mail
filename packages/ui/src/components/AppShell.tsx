@@ -146,13 +146,15 @@ function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemove
 /** Feedback persistente e discreto durante a primeira carga/sync incremental. */
 function SyncStatus(): ReactElement | null {
   const theme = useTheme();
-  const { sync } = useMailSnapshot();
-  if (sync.status !== 'syncing') return null;
+  const { sync, accounts } = useMailSnapshot();
+  const error = accounts.find((account) => account.lastError)?.lastError ?? sync.lastError;
+  if (sync.status !== 'syncing' && !error) return null;
 
   return (
     <View
-      accessibilityRole="status"
-      accessibilityLabel="Atualizando mensagens"
+      role="status"
+      accessibilityLiveRegion="polite"
+      accessibilityLabel={error ? `Falha na sincronização: ${error}` : 'Atualizando mensagens'}
       style={{
         position: 'absolute',
         top: theme.space[3],
@@ -169,9 +171,9 @@ function SyncStatus(): ReactElement | null {
         backgroundColor: theme.colors.surface
       }}
     >
-      <ActivityIndicator size="small" color={theme.colors.accent} />
-      <Text style={{ ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary }}>
-        Atualizando…
+      {!error && <ActivityIndicator size="small" color={theme.colors.accent} />}
+      <Text numberOfLines={1} style={{ maxWidth: 280, ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary }}>
+        {error ? `Falha na sincronização: ${error}` : 'Atualizando…'}
       </Text>
     </View>
   );

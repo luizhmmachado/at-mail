@@ -259,6 +259,19 @@ describe('filtros de contexto e canal', () => {
       1
     );
   });
+
+  it('mantém o e-mail recebido aberto na caixa de entrada depois de responder, em qualquer ordem', () => {
+    const received = fixture().find(isEmailMessage)!;
+    const sent = { ...received, id: brand.message('sent-reply'), folder: 'sent' as const,
+      labels: ['SENT'], receivedAt: received.receivedAt + 1000 };
+    for (const messages of [[received, sent], [sent, received]]) {
+      const inbox = selectFeed(messages, { contextId: 'all', channel: 'email', query: '' });
+      assert.equal(inbox.threads.length, 1);
+      assert.equal(inbox.threads[0]?.emailFolder, 'inbox');
+      assert.equal(inbox.threads[0]?.messageIds.length, 2);
+      assert.equal(selectFeed(messages, { contextId: 'all', channel: 'email', query: '', sentOnly: true }).threads.length, 1);
+    }
+  });
 });
 
 describe('busca com operadores', () => {

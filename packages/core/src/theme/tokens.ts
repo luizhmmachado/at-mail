@@ -9,6 +9,7 @@ import rawTokens from './figma.tokens.json';
  */
 
 export type ThemeMode = 'light' | 'dark';
+export type ThemePreference = ThemeMode | 'system';
 
 export type ColorRole = keyof typeof rawTokens.color;
 

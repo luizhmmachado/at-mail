@@ -3,7 +3,8 @@
     "name": "@mail",
     "slug": "at-mail",
     "scheme": "atmail",
-    "version": "0.1.10",
+    "version": "0.1.11",
+    "icon": "./assets/icon.png",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,16 +14,23 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.atmail.client",
-      "buildNumber": "10",
+      "buildNumber": "11",
+      "icon": {
+        "light": "./assets/icon.png",
+        "dark": "./assets/icon-dark.png"
+      },
       "infoPlist": {
         "NSUserTrackingUsageDescription": "Não rastreamos você. Este app não usa identificadores de publicidade."
       }
     },
     "android": {
       "package": "app.atmail.client",
-      "versionCode": 10,
+      "versionCode": 11,
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#FBFBFA"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
       },
       "permissions": [
         "POST_NOTIFICATIONS"
@@ -34,12 +42,14 @@
       "name": "@mail",
       "shortName": "@mail",
       "themeColor": "#FBFBFA",
-      "backgroundColor": "#FBFBFA"
+      "backgroundColor": "#FBFBFA",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-secure-store",
       "expo-notifications",
-      "expo-font"
+      "expo-font",
+      "./plugins/with-dark-adaptive-icon.cjs"
     ],
     "experiments": {
       "typedRoutes": false

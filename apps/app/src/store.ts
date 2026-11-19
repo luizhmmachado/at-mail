@@ -2,26 +2,29 @@ import { createAppStore, createPresetContexts, createSeedData, SyncEngine } from
 import type { MailboxAdapter, SyncPage } from '@mail/core';
 import { DEMO_MODE } from './config';
 import { createHttpAdapter, markMessagesRead } from './adapters/sync-client';
-import { readThemeModeSync, writeThemeMode } from './theme-preference';
+import { readThemePreferenceSync, writeThemePreference } from './theme-preference';
 import { presentMessageNotification } from './notifications';
+import { Appearance } from 'react-native';
 
 const seed = createSeedData();
+const themePreference = readThemePreferenceSync() ?? 'system';
 
 export const store = createAppStore({
   contexts: DEMO_MODE ? seed.contexts : createPresetContexts(),
   accounts: DEMO_MODE ? seed.accounts : [],
   messages: DEMO_MODE ? seed.messages : [],
-  themeMode: readThemeModeSync() ?? 'light',
+  themePreference,
+  themeMode: themePreference === 'system' ? Appearance.getColorScheme() ?? 'light' : themePreference,
   onMarkMessagesRead: DEMO_MODE ? undefined : markMessagesRead
 });
 
 /** O tema escolhido sobrevive a reinícios do site/app. */
-let persistedTheme = store.getSnapshot().ui.themeMode;
+let persistedTheme = store.getSnapshot().ui.themePreference;
 store.subscribe(() => {
-  const mode = store.getSnapshot().ui.themeMode;
+  const mode = store.getSnapshot().ui.themePreference;
   if (mode === persistedTheme) return;
   persistedTheme = mode;
-  writeThemeMode(mode);
+  writeThemePreference(mode);
 });
 
 /** Em modo demo nada sai para a rede: a UI é explorada com dados locais. */

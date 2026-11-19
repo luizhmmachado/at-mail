@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Platform, StyleSheet, View } from 'react-native';
+import { Appearance, AppState, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -14,21 +14,25 @@ import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
 import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken } from './src/auth';
-import { restoreThemeMode } from './src/theme-preference';
+import { restoreThemePreference } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
 import { addChatReaction, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
 import { brand, isChatMessage } from '@mail/core';
-import type { Account, AccountId, ChatMessage, ContextId, UnifiedThread } from '@mail/core';
+import type { Account, AccountId, ChatMessage, ContextId, MessageId, UnifiedThread } from '@mail/core';
+import { createLocalEmailMessage } from './src/email-send';
+import type { EmailSendRequest } from './src/email-send';
 
-const EMAIL_SYNC_INTERVAL_MS = 30 * 1000;
+const EMAIL_SYNC_INTERVAL_MS = 5 * 1000;
 const CHAT_SYNC_INTERVAL_MS = 5 * 1000;
+const OPEN_CHAT_SYNC_INTERVAL_MS = 3 * 1000;
 
-let optimisticChatMessageSequence = 0;
+let optimisticMessageSequence = 0;
+const legacySends = new Map<MessageId, { accountId: AccountId; confirmedAt: number }>();
 
-function nextOptimisticChatMessageName(): string {
-  optimisticChatMessageSequence += 1;
-  return `optimistic:${Date.now()}:${optimisticChatMessageSequence}`;
+function nextOptimisticMessageName(): string {
+  optimisticMessageSequence += 1;
+  return `optimistic:${Date.now()}:${optimisticMessageSequence}`;
 }
 
 function createLocalChatMessage(
@@ -83,38 +87,70 @@ export default function App() {
     void syncEngine.syncAll();
   }, [isPublicWeb]);
 
+  function reconcileLegacySend(accountId: AccountId, optimisticId: MessageId): void {
+    legacySends.set(optimisticId, { accountId, confirmedAt: Date.now() });
+    void syncEngine.syncAccount(accountId, { afterCurrent: true });
+  }
+
+  async function sendEmailOptimistically(accountId: AccountId, request: EmailSendRequest): Promise<void> {
+    const account = store.accountFor(accountId);
+    if (!account) throw new Error('A conta desta conversa não está disponível.');
+    const messageId = nextOptimisticMessageName();
+    const optimistic = createLocalEmailMessage(account, request, {
+      messageId, threadId: request.providerThreadId ?? messageId, receivedAt: Date.now()
+    });
+    store.actions.upsertMessages([optimistic]);
+    try {
+      const receipt = await sendEmail(accountId, request);
+      if (receipt !== undefined) {
+        store.actions.upsertMessages([createLocalEmailMessage(account, request, receipt)]);
+        store.actions.removeMessages([optimistic.id]);
+      } else {
+        reconcileLegacySend(accountId, optimistic.id);
+      }
+    } catch (error) {
+      store.actions.removeMessages([optimistic.id]);
+      throw error;
+    }
+    void syncEngine.syncChannel('email');
+  }
+
   async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string): Promise<void> {
     const messages = store.getThreadMessages(thread.id);
     const last = messages[messages.length - 1];
+    if (!last) throw new Error('Não encontrei uma mensagem para responder.');
     if (!last) throw new Error('Não encontrei a última mensagem desta conversa.');
     if (isChatMessage(last)) {
       const account = store.accountFor(last.accountId);
       if (!account) throw new Error('A conta desta conversa não está disponível.');
-      const optimisticName = nextOptimisticChatMessageName();
+      const optimisticName = nextOptimisticMessageName();
       const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now(), chatThreadName);
       store.actions.upsertMessages([optimisticMessage]);
       try {
         const receipt = await sendChatReply(last.accountId, last.spaceId, chatThreadName, body);
-        store.actions.removeMessages([optimisticMessage.id]);
         if (receipt !== undefined) {
           store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt, chatThreadName)]);
+          store.actions.removeMessages([optimisticMessage.id]);
+        } else {
+          reconcileLegacySend(last.accountId, optimisticMessage.id);
         }
       } catch (error) {
         store.actions.removeMessages([optimisticMessage.id]);
         throw error;
       }
-      void syncEngine.syncChannel('chat');
+      void syncEngine.syncSpace(last.accountId, last.spaceId);
       return;
     }
-    const recipient = last?.participants.find((participant) => participant.email.length > 0)?.email;
-    if (!last || !recipient) throw new Error('Não encontrei um destinatário para responder.');
-    await sendEmail(last.accountId, {
+    const account = store.accountFor(last.accountId);
+    const recipient = last.participants.find((participant) => participant.email.length > 0 && participant.email.toLowerCase() !== account?.email.toLowerCase())?.email;
+    if (!recipient) throw new Error('Não encontrei um destinatário para responder.');
+    await sendEmailOptimistically(last.accountId, {
       to: [recipient],
       subject: thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`,
       body,
-      inReplyTo: last.channel === 'email' ? last.rfcMessageId : undefined
+      inReplyTo: last.rfcMessageId,
+      providerThreadId: last.providerThreadId.startsWith('optimistic:') ? undefined : last.providerThreadId
     });
-    void syncEngine.syncChannel('email');
   }
 
   async function handleReactChat(message: ChatMessage, emoji: string): Promise<void> {
@@ -131,7 +167,7 @@ export default function App() {
       store.actions.upsertMessages([message]);
       throw error;
     }
-    void syncEngine.syncChannel('chat');
+    void syncEngine.syncSpace(message.accountId, message.spaceId);
   }
 
   async function moveAccountsToContext(accountIds: AccountId[], contextId: ContextId): Promise<void> {
@@ -160,21 +196,25 @@ export default function App() {
   async function sendNewMessage(message: NewMessageSubmission): Promise<void> {
     if (DEMO_MODE) return;
     if (message.channel === 'email') {
-      await sendEmail(message.accountId, { to: message.recipients, subject: message.subject, body: message.body, attachments: message.attachments });
+      await sendEmailOptimistically(message.accountId, { to: message.recipients, subject: message.subject, body: message.body, attachments: message.attachments });
+      return;
     } else {
       const recipient = message.recipients[0];
       if (!recipient) throw new Error('Informe o destinatário do Chat.');
       const account = store.accountFor(message.accountId);
       if (!account) throw new Error('A conta desta conversa não está disponível.');
-      const optimisticName = nextOptimisticChatMessageName();
-      const optimisticSpaceName = `spaces/pending-${Date.now()}-${optimisticChatMessageSequence}`;
+      const optimisticName = nextOptimisticMessageName();
+      const optimisticSpaceName = `spaces/pending-${Date.now()}-${optimisticMessageSequence}`;
       const optimisticMessage = createLocalChatMessage(account, optimisticName, optimisticSpaceName, recipient, true, message.body, Date.now());
       store.actions.upsertMessages([optimisticMessage]);
       try {
         const receipt = await sendChatMessage(message.accountId, recipient, message.body);
-        store.actions.removeMessages([optimisticMessage.id]);
         if (receipt !== undefined) {
           store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
+          store.actions.removeMessages([optimisticMessage.id]);
+          void syncEngine.syncSpace(account.id, receipt.spaceResourceName);
+        } else {
+          reconcileLegacySend(account.id, optimisticMessage.id);
         }
       } catch (error) {
         store.actions.removeMessages([optimisticMessage.id]);
@@ -205,11 +245,27 @@ export default function App() {
   });
 
   useEffect(() => {
-    void restoreThemeMode()
+    const applySystemTheme = (): void => store.actions.applySystemTheme(Appearance.getColorScheme() ?? 'light');
+    let preference = store.getSnapshot().ui.themePreference;
+    const unsubscribe = store.subscribe(() => {
+      const next = store.getSnapshot().ui.themePreference;
+      if (next === preference) return;
+      preference = next;
+      if (next === 'system') applySystemTheme();
+    });
+    const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+      store.actions.applySystemTheme(colorScheme ?? 'light');
+    });
+    applySystemTheme();
+    void restoreThemePreference()
       .then((mode) => {
-        if (mode !== undefined) store.actions.setThemeMode(mode);
+        if (mode !== undefined) store.actions.setThemePreference(mode);
       })
-      .catch(() => undefined);
+      .catch((error) => console.error('Falha ao restaurar a preferência de tema.', error));
+    return () => {
+      unsubscribe();
+      subscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -250,15 +306,47 @@ export default function App() {
     const syncChatIfActive = (): void => {
       if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncChannel('chat');
     };
+    const syncOpenChatIfActive = (): void => {
+      if (!isTauriRuntime() && AppState.currentState !== 'active') return;
+      const threadId = store.getSnapshot().view.selectedThreadId;
+      if (threadId === undefined) return;
+      const message = store.getThreadMessages(threadId).find((item) => isChatMessage(item) && !item.id.includes(':optimistic:'));
+      if (message === undefined || !isChatMessage(message)) return;
+      const account = store.accountFor(message.accountId);
+      if (!account || account.status === 'paused' || account.status === 'reauth-required') return;
+      void syncEngine.syncSpace(account.id, message.spaceId);
+    };
     syncIfActive();
+    syncOpenChatIfActive();
     const emailInterval = setInterval(syncEmailIfActive, EMAIL_SYNC_INTERVAL_MS);
     const chatInterval = setInterval(syncChatIfActive, CHAT_SYNC_INTERVAL_MS);
+    const openChatInterval = setInterval(syncOpenChatIfActive, OPEN_CHAT_SYNC_INTERVAL_MS);
+    let selectedThreadId = store.getSnapshot().view.selectedThreadId;
+    const unsubscribe = store.subscribe(() => {
+      // Sem recibo, só um sync completo iniciado após a confirmação pode substituir a mensagem local.
+      for (const [id, pending] of legacySends) {
+        const account = store.accountFor(pending.accountId);
+        if (!account || (account.lastSyncedAt !== undefined && account.lastSyncedAt >= pending.confirmedAt)) {
+          legacySends.delete(id);
+          store.actions.removeMessages([id]);
+        }
+      }
+      const nextThreadId = store.getSnapshot().view.selectedThreadId;
+      if (nextThreadId === selectedThreadId) return;
+      selectedThreadId = nextThreadId;
+      syncOpenChatIfActive();
+    });
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') syncIfActive();
+      if (state === 'active') {
+        syncIfActive();
+        syncOpenChatIfActive();
+      }
     });
     return () => {
       clearInterval(emailInterval);
       clearInterval(chatInterval);
+      clearInterval(openChatInterval);
+      unsubscribe();
       subscription?.remove();
     };
   }, [authenticated]);

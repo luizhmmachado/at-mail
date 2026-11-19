@@ -80,14 +80,19 @@ export async function sendGmail(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { to: string[]; subject?: string; body: string; inReplyTo?: string; attachments?: GmailAttachmentPayload[] }
-): Promise<void> {
+  input: { to: string[]; subject?: string; body: string; inReplyTo?: string; providerThreadId?: string; attachments?: GmailAttachmentPayload[] }
+): Promise<{ messageId: string; threadId: string; receivedAt: number; rfcMessageId: string }> {
   const token = await accessToken(db, config, userId, accountId);
-  const raw = createGmailRawMessage(input);
-  await googleJsonRequest('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', token, {
+  const rfcMessageId = `<${randomUUID()}@atmail.local>`;
+  const raw = createGmailRawMessage({ ...input, rfcMessageId });
+  const message = await googleJsonRequest('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', token, {
     method: 'POST',
-    body: JSON.stringify({ raw })
+    body: JSON.stringify({ raw, ...(input.providerThreadId ? { threadId: input.providerThreadId } : {}) })
   });
+  if (typeof message.id !== 'string' || !message.id || typeof message.threadId !== 'string' || !message.threadId) {
+    throw new Error('O Gmail não retornou os identificadores da mensagem enviada.');
+  }
+  return { messageId: message.id, threadId: message.threadId, receivedAt: Date.now(), rfcMessageId };
 }
 
 export function createGmailRawMessage(input: {
@@ -95,6 +100,7 @@ export function createGmailRawMessage(input: {
   subject?: string;
   body: string;
   inReplyTo?: string;
+  rfcMessageId?: string;
   attachments?: GmailAttachmentPayload[];
 }): string {
   const subject = encodeMimeHeader((input.subject ?? '').replace(/[\r\n]/g, ' '));
@@ -112,6 +118,7 @@ export function createGmailRawMessage(input: {
   ];
   const inReplyTo = input.inReplyTo === undefined ? undefined : safeHeaderValue(input.inReplyTo.trim(), 'In-Reply-To');
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
+  if (input.rfcMessageId) headers.push(`Message-ID: ${safeHeaderValue(input.rfcMessageId.trim(), 'Message-ID')}`);
 
   const attachments = input.attachments ?? [];
   if (attachments.length === 0) {
@@ -507,7 +514,7 @@ export function chatMessagesUrl(spaceName: string): string {
   return url.toString();
 }
 
-export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
+export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, options: { cursor?: string; spaceId?: string } = {}): Promise<{ messages: MailMessage[]; removedIds: MessageId[]; cursor: string; hasMore: boolean }> {
   const token = await accessToken(db, config, userId, accountId);
   const currentUser = (await db.query<{ name: string | null }>('SELECT name FROM atmail_users WHERE id = $1', [userId])).rows[0];
   const savedThreadStates = (await db.query<{ thread_name: string; last_read_time: string }>(
@@ -515,7 +522,12 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
     [userId, accountId]
   )).rows;
   const threadReadTimes = new Map(savedThreadStates.map((state) => [state.thread_name, Number(state.last_read_time)]));
-  const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
+  const spacesUrl = new URL('https://chat.googleapis.com/v1/spaces');
+  spacesUrl.searchParams.set('pageSize', '5');
+  if (options.cursor) spacesUrl.searchParams.set('pageToken', options.cursor);
+  const spaces = options.spaceId
+    ? { spaces: [await googleJson(`https://chat.googleapis.com/v1/${options.spaceId}`, token)] }
+    : await googleJson(spacesUrl.toString(), token);
   const spaceList = (spaces.spaces ?? []).filter((space: any) => typeof space?.name === 'string');
   const pages = new Array<any>(spaceList.length);
   let nextIndex = 0;
@@ -567,5 +579,5 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
       messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName, isThreadReply: item.threadReply === true } : {}), reactions });
     }
   }
-  return { messages, removedIds: [] };
+  return { messages, removedIds: [], cursor: spaces.nextPageToken ?? '', hasMore: Boolean(spaces.nextPageToken) };
 }

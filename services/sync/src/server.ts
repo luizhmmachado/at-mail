@@ -289,8 +289,12 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           }
           const bodyText = String(input.body ?? '');
           if (!bodyText.trim() && attachments.length === 0) return json(res, 400, { error: 'corpo ou anexo são obrigatórios' }, headers);
-          await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: bodyText, inReplyTo, attachments });
-          return json(res, 200, { sent: true }, headers);
+          const providerThreadId = typeof input.providerThreadId === 'string' ? input.providerThreadId : undefined;
+          if (providerThreadId !== undefined && !/^[a-zA-Z0-9_-]+$/.test(providerThreadId)) {
+            return json(res, 400, { error: 'thread de e-mail inválida' }, headers);
+          }
+          const receipt = await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: bodyText, inReplyTo, providerThreadId, attachments });
+          return json(res, 200, { sent: true, ...receipt }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/send-chat' || url.pathname === '/api/messages/send-chat')) {
           const input = await body(req);
@@ -334,7 +338,14 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const accountId = String(input.accountId ?? '');
           const account = (await db.query<{ context_id: string }>('SELECT context_id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
-          const result = syncMatch[1] === 'gmail' ? await fetchGmail(db, config, userId, accountId, account.context_id, typeof input.cursor === 'string' ? input.cursor : undefined) : await fetchChat(db, config, userId, accountId, account.context_id);
+          const cursor = typeof input.cursor === 'string' ? input.cursor : undefined;
+          const spaceId = typeof input.spaceId === 'string' ? input.spaceId : undefined;
+          if (spaceId !== undefined && !/^spaces\/[A-Za-z0-9._-]+$/.test(spaceId)) {
+            return json(res, 400, { error: 'espaço inválido' }, headers);
+          }
+          const result = syncMatch[1] === 'gmail'
+            ? await fetchGmail(db, config, userId, accountId, account.context_id, cursor)
+            : await fetchChat(db, config, userId, accountId, account.context_id, { cursor, spaceId });
           return json(res, 200, result, headers);
         }
         return json(res, 404, { error: 'rota não encontrada' }, headers);

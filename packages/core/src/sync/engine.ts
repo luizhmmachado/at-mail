@@ -1,6 +1,6 @@
 import type { Account, AccountId, ChannelKind } from '../domain/models';
 import type { AppStore } from '../state/store';
-import { SyncError, type MailboxAdapter } from './types';
+import { SyncError, type MailboxAdapter, type SyncPage } from './types';
 
 export interface SyncEngineOptions {
   store: AppStore;
@@ -32,6 +32,7 @@ export class SyncEngine {
   private readonly now: () => number;
   private readonly onNewMessages?: SyncEngineOptions['onNewMessages'];
   private readonly runningAccounts = new Map<AccountId, Promise<SyncOutcome>>();
+  private readonly runningSpaces = new Map<string, Promise<SyncOutcome>>();
   private readonly accountSyncVersions = new Map<AccountId, number>();
   private activeSyncRuns = 0;
 
@@ -53,16 +54,30 @@ export class SyncEngine {
     return this.adapters.get(`${account.provider}:${account.channel === 'email' ? 'email' : 'chat'}`);
   }
 
-  syncAccount(accountId: AccountId): Promise<SyncOutcome> {
+  async syncAccount(accountId: AccountId, options: { afterCurrent?: boolean } = {}): Promise<SyncOutcome> {
+    if (options.afterCurrent) await this.runningAccounts.get(accountId);
     const account = this.store.accountFor(accountId);
     if (account === undefined) {
-      return Promise.resolve({ accountId, newMessages: 0, ok: false, error: 'conta inexistente' });
+      return { accountId, newMessages: 0, ok: false, error: 'conta inexistente' };
     }
     return this.runAccountOnce(account);
   }
 
   syncAll(): Promise<SyncOutcome[]> {
     return this.runAll();
+  }
+
+  syncSpace(accountId: AccountId, spaceId: string): Promise<SyncOutcome> {
+    const key = JSON.stringify([accountId, spaceId]);
+    const running = this.runningSpaces.get(key);
+    if (running !== undefined) return running;
+    const account = this.store.accountFor(accountId);
+    if (account === undefined) {
+      return Promise.resolve({ accountId, newMessages: 0, ok: false, error: 'conta inexistente' });
+    }
+    const request = this.runAccount(account, spaceId).finally(() => this.runningSpaces.delete(key));
+    this.runningSpaces.set(key, request);
+    return request;
   }
 
   syncChannel(channel: ChannelKind): Promise<SyncOutcome[]> {
@@ -119,40 +134,63 @@ export class SyncEngine {
     return request;
   }
 
-  private async runAccount(account: Account): Promise<SyncOutcome> {
+  private async runAccount(account: Account, spaceId?: string): Promise<SyncOutcome> {
     const adapter = this.adapterFor(account);
     if (adapter === undefined) {
       this.markAccount(account.id, { status: 'error', lastError: 'adaptador não registrado' });
       return { accountId: account.id, newMessages: 0, ok: false, error: 'adaptador não registrado' };
     }
 
-    this.markAccount(account.id, { status: 'syncing' });
+    if (spaceId === undefined) this.markAccount(account.id, { status: 'syncing' });
 
     try {
-      const page = await adapter.fetchSince(account, account.syncCursor);
-      if (this.store.accountFor(account.id) === undefined) {
-        return { accountId: account.id, newMessages: 0, ok: true };
+      const startedAt = this.now();
+      let cursor = account.syncCursor;
+      let received = 0;
+      const visitedCursors = new Set([cursor]);
+      for (;;) {
+        let page: SyncPage;
+        if (spaceId === undefined) {
+          page = await adapter.fetchSince(account, cursor);
+        } else {
+          if (adapter.fetchSpace === undefined) throw new SyncError('adaptador não suporta sincronização por espaço');
+          page = await adapter.fetchSpace(account, spaceId);
+        }
+        if (this.store.accountFor(account.id) === undefined) {
+          return { accountId: account.id, newMessages: received, ok: true };
+        }
+        const hasMore = spaceId === undefined && page.hasMore === true && page.requiresReauth !== true;
+        if (hasMore && (!page.nextCursor || visitedCursors.has(page.nextCursor))) throw new SyncError('cursor de sincronização não avançou');
+        const knownIds = new Set(this.store.getSnapshot().messages.map((message) => message.id));
+        const newMessages = page.messages.filter((message) => !knownIds.has(message.id));
+        this.store.actions.removeMessages(page.removedIds);
+        this.store.actions.upsertMessages(page.messages);
+        received += page.messages.length;
+        if (account.lastSyncedAt !== undefined && newMessages.length > 0) {
+          try {
+            this.onNewMessages?.(account, newMessages.filter((message) => message.receivedAt > (account.lastSyncedAt ?? 0)));
+          } catch {}
+        }
+        cursor = page.nextCursor ?? cursor;
+        visitedCursors.add(cursor);
+        this.markAccount(account.id, {
+          status: page.requiresReauth === true ? 'reauth-required' : 'connected',
+          ...(spaceId === undefined ? {
+            syncCursor: cursor,
+            lastSyncedAt: hasMore || page.requiresReauth === true ? account.lastSyncedAt : startedAt
+          } : {}),
+          lastError: undefined
+        });
+        if (!hasMore) break;
       }
-      const knownIds = new Set(this.store.getSnapshot().messages.map((message) => message.id));
-      const newMessages = page.messages.filter((message) => !knownIds.has(message.id));
-      this.store.actions.removeMessages(page.removedIds);
-      this.store.actions.upsertMessages(page.messages);
-      if (account.lastSyncedAt !== undefined && newMessages.length > 0) {
-        try {
-          this.onNewMessages?.(account, newMessages.filter((message) => message.receivedAt > (account.lastSyncedAt ?? 0)));
-        } catch {}
-      }
-      this.markAccount(account.id, {
-        status: page.requiresReauth === true ? 'reauth-required' : 'connected',
-        syncCursor: page.nextCursor ?? account.syncCursor,
-        lastSyncedAt: page.requiresReauth === true ? account.lastSyncedAt : this.now(),
-        lastError: undefined
-      });
-      return { accountId: account.id, newMessages: page.messages.length, ok: true };
+      return { accountId: account.id, newMessages: received, ok: true };
     } catch (error) {
       const isAuth = error instanceof SyncError && error.kind === 'auth';
       const message = error instanceof Error ? error.message : 'falha desconhecida';
-      this.markAccount(account.id, { status: isAuth ? 'reauth-required' : 'error', lastError: message });
+      this.markAccount(account.id, {
+        status: isAuth ? 'reauth-required' : 'error', lastError: message,
+        ...(error instanceof SyncError && error.kind === 'cursor' ? { syncCursor: '' } : {})
+      });
       return { accountId: account.id, newMessages: 0, ok: false, error: message };
     }
   }
