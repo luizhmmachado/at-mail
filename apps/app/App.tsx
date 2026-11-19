@@ -200,9 +200,10 @@ export default function App() {
               <AppShell
                 onSend={handleSend}
                 onReactChat={handleReactChat}
-                onReactChat={handleReactChat}
                 onAddAccount={() => void beginAddAccount()}
                 onMoveAccounts={moveAccountsToContext}
+                onRemoveAccount={removeConnectedAccount}
+                onSetAccountNotifications={setNotificationsForAccount}
                 onSendNewMessage={sendNewMessage}
               />
             </MailStoreProvider>

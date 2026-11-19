@@ -138,17 +138,36 @@ export async function sendChat(
   input: { recipient: string; body: string }
 ): Promise<void> {
   const token = await accessToken(db, config, userId, accountId);
-  const requestId = randomUUID();
-  const space = await googleJsonRequest('https://chat.googleapis.com/v1/spaces:setup', token, {
-    method: 'POST',
-    body: JSON.stringify(createDirectMessageSetupRequest(input.recipient, requestId))
-  });
+  let space: any;
+  try {
+    space = await googleJson(chatDirectMessageUrl(input.recipient), token);
+  } catch (error) {
+    if ((error as Error & { status?: number }).status !== 404) throw error;
+    try {
+      space = await googleJsonRequest('https://chat.googleapis.com/v1/spaces:setup', token, {
+        method: 'POST',
+        body: JSON.stringify(createDirectMessageSetupRequest(input.recipient, randomUUID()))
+      });
+    } catch (setupError) {
+      const details = setupError instanceof Error ? setupError.message : '';
+      if ((setupError as Error & { status?: number }).status === 404 && details.includes('Google Chat app not found')) {
+        throw new Error('Não há uma conversa direta existente. Para iniciar uma nova, configure o app Google Chat e ative a API Chat no Google Cloud.');
+      }
+      throw setupError;
+    }
+  }
   const spaceName = typeof space.name === 'string' ? space.name : '';
   if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName)) throw new Error('O Google Chat não retornou um espaço de conversa válido.');
   await googleJsonRequest(`https://chat.googleapis.com/v1/${spaceName}/messages?requestId=${randomUUID()}`, token, {
     method: 'POST',
     body: JSON.stringify({ text: input.body })
   });
+}
+
+export function chatDirectMessageUrl(recipient: string): string {
+  const url = new URL('https://chat.googleapis.com/v1/spaces:findDirectMessage');
+  url.searchParams.set('name', `users/${recipient}`);
+  return url.toString();
 }
 
 export function createDirectMessageSetupRequest(recipient: string, requestId: string): {
@@ -206,6 +225,10 @@ export function chatSpaceReadStateUrl(spaceName: string): string {
   return `https://chat.googleapis.com/v1/users/me/${spaceName}/spaceReadState`;
 }
 
+export function chatThreadReadStateUrl(threadName: string): string {
+  return `https://chat.googleapis.com/v1/users/me/${threadName}/threadReadState`;
+}
+
 export function chatSpaceReadStateRequest(spaceName: string, lastReadTime: number): { name: string; lastReadTime: string } {
   return {
     name: `users/me/${spaceName}/spaceReadState`,
@@ -213,7 +236,8 @@ export function chatSpaceReadStateRequest(spaceName: string, lastReadTime: numbe
   };
 }
 
-export function isChatMessageRead(receivedAt: number, lastReadTime: number, readStateAvailable: boolean): boolean {
+export function isChatMessageRead(receivedAt: number, lastReadTime: number, readStateAvailable: boolean, threadLastReadTime?: number): boolean {
+  if (threadLastReadTime !== undefined) return receivedAt <= threadLastReadTime;
   return readStateAvailable && receivedAt <= lastReadTime;
 }
 
@@ -232,6 +256,29 @@ export async function markChatSpaceRead(
     method: 'PATCH',
     body: JSON.stringify(chatSpaceReadStateRequest(spaceName, lastReadTime))
   });
+}
+
+export async function markChatThreadRead(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  spaceName: string,
+  threadName: string,
+  lastReadTime: number
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const url = new URL(chatThreadReadStateUrl(threadName));
+  url.searchParams.set('updateMask', 'lastReadTime');
+  const timestamp = new Date(lastReadTime).toISOString();
+  await googleJsonRequest(url.toString(), token, {
+    method: 'PATCH',
+    body: JSON.stringify({ name: `users/me/${threadName}/threadReadState`, lastReadTime: timestamp })
+  });
+  await db.query(
+    'INSERT INTO atmail_chat_thread_read_states (user_id, account_id, space_id, thread_name, last_read_time, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(user_id, account_id, thread_name) DO UPDATE SET last_read_time = excluded.last_read_time, updated_at = excluded.updated_at',
+    [userId, accountId, spaceName, threadName, lastReadTime, Date.now()]
+  );
 }
 
 function decodeBase64Url(value: string | undefined): string {
@@ -419,6 +466,11 @@ export function chatMessagesUrl(spaceName: string): string {
 export async function fetchChat(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
   const currentUser = (await db.query<{ name: string | null }>('SELECT name FROM atmail_users WHERE id = $1', [userId])).rows[0];
+  const savedThreadStates = (await db.query<{ thread_name: string; last_read_time: string }>(
+    'SELECT thread_name, last_read_time FROM atmail_chat_thread_read_states WHERE user_id = $1 AND account_id = $2',
+    [userId, accountId]
+  )).rows;
+  const threadReadTimes = new Map(savedThreadStates.map((state) => [state.thread_name, Number(state.last_read_time)]));
   const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
   const spaceList = (spaces.spaces ?? []).filter((space: any) => typeof space?.name === 'string');
   const pages = new Array<any>(spaceList.length);
@@ -465,7 +517,10 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
           ? [{ emoji, count: Number(reaction.reactionCount) || 0 }]
           : [];
       });
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead: item.sender?.name === 'users/me' || isChatMessageRead(receivedAt, result.lastReadTime, result.readStateAvailable), isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(item.thread?.name ? { threadName: item.thread.name } : {}), reactions });
+      const threadName = typeof item.thread?.name === 'string' ? item.thread.name : undefined;
+      const lastReadTime = threadName === undefined ? undefined : threadReadTimes.get(threadName);
+      const isRead = item.sender?.name === 'users/me' || isChatMessageRead(receivedAt, result.lastReadTime, result.readStateAvailable, lastReadTime);
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName } : {}), reactions });
     }
   }
   return { messages, removedIds: [] };

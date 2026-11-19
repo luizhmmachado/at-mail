@@ -5,7 +5,7 @@ import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import type { Db } from '../src/db';
-import { chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
+import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -27,6 +27,12 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('localiza uma conversa direta existente pelo e-mail', () => {
+    const url = new URL(chatDirectMessageUrl('pessoa@example.com'));
+    assert.equal(url.pathname, '/v1/spaces:findDirectMessage');
+    assert.equal(url.searchParams.get('name'), 'users/pessoa@example.com');
+  });
+
   it('responde no espaço/thread existente e cria reações com emoji Unicode', () => {
     assert.deepEqual(chatReplyRequest('Olá', 'spaces/space-1/threads/thread-1'), {
       text: 'Olá',
@@ -45,6 +51,8 @@ describe('nome de espaços do Google Chat', () => {
     assert.equal(isChatMessageRead(1_699_999_999_000, 1_700_000_000_000, true), true);
     assert.equal(isChatMessageRead(1_700_000_001_000, 1_700_000_000_000, true), false);
     assert.equal(isChatMessageRead(1_699_999_999_000, 1_700_000_000_000, false), false);
+    assert.equal(isChatMessageRead(1_700_000_001_000, 1_700_000_000_000, false, 1_700_000_002_000), true);
+    assert.equal(isChatMessageRead(1_700_000_003_000, 1_700_000_000_000, true, 1_700_000_002_000), false);
   });
 
   it('inclui destinatário e requestId no corpo de setup do DM', () => {
