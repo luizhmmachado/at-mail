@@ -175,6 +175,7 @@ describe('ação de excluir', () => {
 
   it('não altera conversa de chat', () => {
     const store = storeWithSeed();
+    store.actions.setChannel('chat');
     const target = store.getFeed().threads.find((thread) => thread.channel === 'chat');
     assert.ok(target !== undefined);
 
