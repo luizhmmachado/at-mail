@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react';
-import { Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { contextAccent } from '@mail/core';
 import type { Account, AccountId, ContextId } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
@@ -95,6 +95,8 @@ export interface SettingsModalProps {
   onClose: () => void;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
+  onRemoveAccount?: (accountId: AccountId) => Promise<void>;
+  onSetAccountNotifications?: (accountId: AccountId, enabled: boolean) => Promise<void>;
 }
 
 interface AccountGroup {
@@ -106,13 +108,14 @@ interface AccountGroup {
   contextId?: ContextId;
 }
 
-export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }: SettingsModalProps): ReactElement {
+export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications }: SettingsModalProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const { width } = useWindowDimensions();
   const [savingGroup, setSavingGroup] = useState<string>();
   const [error, setError] = useState<string>();
+  const [activeTab, setActiveTab] = useState<'accounts' | 'notifications'>('accounts');
   const groups = groupAccounts(snapshot.accounts);
 
   async function moveGroup(group: AccountGroup, contextId: ContextId): Promise<void> {
@@ -123,6 +126,33 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }
       await onMoveAccounts(group.accountIds, contextId);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Não foi possível salvar o contexto da conta.');
+    } finally {
+      setSavingGroup(undefined);
+    }
+  }
+
+  async function removeGroup(group: AccountGroup): Promise<void> {
+    if (onRemoveAccount === undefined) return;
+    setSavingGroup(group.key);
+    setError(undefined);
+    try {
+      for (const accountId of group.accountIds) await onRemoveAccount(accountId);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Não foi possível remover a conta.');
+    } finally {
+      setSavingGroup(undefined);
+    }
+  }
+
+  async function setNotifications(account: Account, enabled: boolean): Promise<void> {
+    if (onSetAccountNotifications === undefined) return;
+    setSavingGroup(account.id);
+    setError(undefined);
+    try {
+      await onSetAccountNotifications(account.id, enabled);
+      actions.registerAccount({ ...account, notificationsEnabled: enabled });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Não foi possível salvar as notificações.');
     } finally {
       setSavingGroup(undefined);
     }
@@ -152,7 +182,14 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }
             </Pressable>
           </View>
 
+          <View style={{ flexDirection: 'row', gap: theme.space[2], paddingHorizontal: theme.space[5], paddingTop: theme.space[4] }}>
+            <SettingsTab label="Contas" selected={activeTab === 'accounts'} onPress={() => setActiveTab('accounts')} />
+            <SettingsTab label="Notificações" selected={activeTab === 'notifications'} onPress={() => setActiveTab('notifications')} />
+          </View>
+
           <ScrollView contentContainerStyle={{ padding: theme.space[5], paddingTop: theme.space[4] }}>
+            {activeTab === 'accounts' ? (
+              <>
             <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>TEMA DA PÁGINA</Text>
             <View style={{ flexDirection: 'row', gap: theme.space[2], marginTop: theme.space[2] }}>
               <ThemeOption label="Claro" selected={snapshot.ui.themeMode === 'light'} onPress={() => actions.setThemeMode('light')} />
@@ -192,6 +229,16 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }
                     );
                   })}
                 </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remover conta ${group.email} e seus canais`}
+                  disabled={savingGroup !== undefined || onRemoveAccount === undefined}
+                  onPress={() => void removeGroup(group)}
+                  style={{ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: theme.space[2], marginTop: theme.space[2] }}
+                >
+                  <Glyph name="trash" size={15} color={theme.colors.danger} />
+                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.danger }}>Remover conta</Text>
+                </Pressable>
               </View>
             ))}
             {error !== undefined && (
@@ -212,10 +259,46 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts }
               <Glyph name="plus" size={16} color={theme.colors.surface} />
               <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>Adicionar conta Google</Text>
             </Pressable>
+              </>
+            ) : (
+              <View>
+                <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>NOTIFICAR SOBRE NOVAS MENSAGENS</Text>
+                {snapshot.accounts.length === 0 ? (
+                  <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, paddingVertical: theme.space[4] }}>Nenhuma conta conectada.</Text>
+                ) : snapshot.accounts.map((account) => (
+                  <View key={account.id} style={{ minHeight: 62, flexDirection: 'row', alignItems: 'center', borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1} style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>{account.channel === 'chat' ? 'Chat' : 'E-mail'} · {account.email}</Text>
+                      <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>{account.displayName}</Text>
+                    </View>
+                    <Switch
+                      accessibilityLabel={`Notificações ${account.channel === 'chat' ? 'do Chat' : 'de e-mail'} para ${account.email}`}
+                      value={account.notificationsEnabled !== false}
+                      disabled={savingGroup !== undefined || onSetAccountNotifications === undefined}
+                      onValueChange={(enabled) => void setNotifications(account, enabled)}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
           </ScrollView>
         </View>
       </View>
     </Modal>
+  );
+}
+
+function SettingsTab({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={{ flex: 1, minHeight: 38, alignItems: 'center', justifyContent: 'center', borderBottomWidth: selected ? 2 : 0, borderBottomColor: theme.colors.accent }}
+    >
+      <Text style={{ ...typeStyle(theme, 'button', selected ? 'medium' : 'regular'), color: selected ? theme.colors.accent : theme.colors.textSecondary }}>{label}</Text>
+    </Pressable>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from 'react-native';
-import type { AccountId, ContextId, ThreadId, UnifiedThread } from '@mail/core';
+import type { AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -16,21 +16,24 @@ type MobilePane = 'list' | 'reader';
 
 export interface AppShellProps {
   onSend?: (thread: UnifiedThread, body: string) => Promise<void>;
+  onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
+  onRemoveAccount?: (accountId: AccountId) => Promise<void>;
+  onSetAccountNotifications?: (accountId: AccountId, enabled: boolean) => Promise<void>;
   onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
 }
 
-export function AppShell({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: AppShellProps = {}): ReactElement {
+export function AppShell({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody onSend={onSend} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onSendNewMessage={onSendNewMessage} />
+      <ShellBody onSend={onSend} onReactChat={onReactChat} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: AppShellProps): ReactElement {
+function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -63,7 +66,7 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: A
       <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
         <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
           {showReader ? (
-              <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} onSend={onSend} />
+              <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} onSend={onSend} onReactChat={onReactChat} />
           ) : (
             <>
               <View style={{ flex: 1 }}>
@@ -86,6 +89,8 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: A
           onClose={() => setSettingsOpen(false)}
           onAddAccount={onAddAccount}
           onMoveAccounts={onMoveAccounts}
+          onRemoveAccount={onRemoveAccount}
+          onSetAccountNotifications={onSetAccountNotifications}
         />
         <NewMessageComposer
           visible={newMessageOpen}
@@ -114,7 +119,7 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: A
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>
-        <ReaderPane thread={selectedThread} onSend={onSend} />
+        <ReaderPane thread={selectedThread} onSend={onSend} onReactChat={onReactChat} />
       </View>
 
       <SyncStatus />
@@ -124,6 +129,8 @@ function ShellBody({ onSend, onAddAccount, onMoveAccounts, onSendNewMessage }: A
         onClose={() => setSettingsOpen(false)}
         onAddAccount={onAddAccount}
         onMoveAccounts={onMoveAccounts}
+        onRemoveAccount={onRemoveAccount}
+        onSetAccountNotifications={onSetAccountNotifications}
       />
       <NewMessageComposer
         visible={newMessageOpen}

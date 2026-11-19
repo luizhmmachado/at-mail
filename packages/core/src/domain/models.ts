@@ -17,6 +17,7 @@ export interface Account {
   displayName: string;
   contextId: ContextId;
   status: ConnectionStatus;
+  notificationsEnabled?: boolean;
   /** Cursor incremental do provedor (historyId, deltaLink, UIDVALIDITY+UID). */
   syncCursor?: string;
   lastSyncedAt?: number;
@@ -86,6 +87,11 @@ export interface EmailMessage extends BaseMessage {
   attachments: Attachment[];
 }
 
+export interface ChatReactionSummary {
+  emoji: string;
+  count: number;
+}
+
 export interface ChatMessage extends BaseMessage {
   channel: 'chat';
   spaceId: SpaceId;
@@ -94,6 +100,7 @@ export interface ChatMessage extends BaseMessage {
   isDirectMessage: boolean;
   /** Nome da thread dentro do espaço (quando a mensagem é resposta). */
   threadName?: string;
+  reactions?: ChatReactionSummary[];
 }
 
 export type MailMessage = EmailMessage | ChatMessage;

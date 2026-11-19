@@ -31,6 +31,8 @@ export interface RawMessageDto {
   spaceName?: string;
   senderName?: string;
   isDirectMessage?: boolean;
+  threadName?: string;
+  reactions?: { emoji: string; count: number }[];
 }
 
 export interface SyncRequest {
@@ -48,20 +50,39 @@ export interface EmailAttachmentPayload {
 
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
   const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
-  if (emailMessages.length === 0) return;
+  const chatMessages = messages.filter((message): message is ChatMessage => message.channel === 'chat');
   const byAccount = new Map<string, string[]>();
   for (const message of emailMessages) {
     const ids = byAccount.get(message.accountId) ?? [];
     ids.push(message.id);
     byAccount.set(message.accountId, ids);
   }
-  await Promise.all(Array.from(byAccount, ([accountId, messageIds]) => apiFetch('/messages/read', {
+  const requests = Array.from(byAccount, ([accountId, messageIds]) => apiFetch('/messages/read', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, messageIds, isRead })
   }).then(async (response) => {
     if (!response.ok) throw new Error(`marcar leitura falhou (${response.status})`);
-  })));
+  }));
+  const bySpace = new Map<string, { accountId: string; spaceId: string; messages: ChatMessage[] }>();
+  for (const message of chatMessages) {
+    const key = `${message.accountId}:${message.spaceId}`;
+    const group = bySpace.get(key) ?? { accountId: message.accountId, spaceId: message.spaceId, messages: [] };
+    group.messages.push(message);
+    bySpace.set(key, group);
+  }
+  for (const group of bySpace.values()) {
+    const readTimes = group.messages.map((message) => message.receivedAt);
+    const lastReadTime = isRead ? Math.max(...readTimes) : Math.max(0, Math.min(...readTimes) - 1);
+    requests.push(apiFetch('/messages/read-chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountId: group.accountId, spaceId: group.spaceId, lastReadTime })
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`marcar Chat como lido falhou (${response.status})`);
+    }));
+  }
+  await Promise.all(requests);
 }
 
 export async function sendEmail(accountId: string, request: SendRequest & { attachments?: EmailAttachmentPayload[] }): Promise<void> {
@@ -82,6 +103,24 @@ export async function sendChatMessage(accountId: string, recipient: string, body
   if (!response.ok) throw new Error((await response.text()).slice(0, 240));
 }
 
+export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string): Promise<void> {
+  const response = await apiFetch('/messages/send-chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, spaceId, threadName, body })
+  });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+}
+
+export async function addChatReaction(accountId: string, messageId: string, emoji: string): Promise<void> {
+  const response = await apiFetch('/messages/react-chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, messageId, emoji })
+  });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+}
+
 export async function updateAccountContexts(accountIds: readonly AccountId[], contextId: ContextId): Promise<void> {
   const response = await apiFetch('/accounts/context', {
     method: 'POST',
@@ -89,6 +128,20 @@ export async function updateAccountContexts(accountIds: readonly AccountId[], co
     body: JSON.stringify({ accountIds, contextId })
   });
   if (!response.ok) throw new Error(`Não foi possível salvar o contexto das contas (${response.status}).`);
+}
+
+export async function setAccountNotifications(accountId: string, enabled: boolean): Promise<void> {
+  const response = await apiFetch('/accounts/notifications', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, enabled })
+  });
+  if (!response.ok) throw new Error(`Não foi possível salvar as notificações (${response.status}).`);
+}
+
+export async function removeAccount(accountId: string): Promise<void> {
+  const response = await apiFetch(`/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(`Não foi possível remover a conta (${response.status}).`);
 }
 
 /**
@@ -149,6 +202,8 @@ export function toMailMessage(dto: RawMessageDto, accountId: string): MailMessag
       senderName: dto.senderName ?? dto.participants[0]?.name ?? 'Alguém',
       isDirectMessage: dto.isDirectMessage === true
     };
+    if (dto.threadName !== undefined) chat.threadName = dto.threadName;
+    if (dto.reactions !== undefined) chat.reactions = dto.reactions;
     return chat;
   }
 

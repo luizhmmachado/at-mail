@@ -5,7 +5,7 @@ import { encrypt, hashToken, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser } from './google.js';
 import { body, cors, html, json } from './http.js';
-import { fetchChat, fetchGmail, markGmailMessagesRead, sendChat, sendGmail, type GmailAttachmentPayload } from './providers.js';
+import { createChatReaction, fetchChat, fetchGmail, markChatSpaceRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
@@ -126,10 +126,31 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           if (updated.length !== accountIds.length) return json(res, 404, { error: 'uma ou mais contas não foram encontradas' }, headers);
           return json(res, 200, { updated: updated.length }, headers);
         }
+        if (req.method === 'POST' && (url.pathname === '/accounts/notifications' || url.pathname === '/api/accounts/notifications')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          if (!accountId || typeof input.enabled !== 'boolean') return json(res, 400, { error: 'conta e preferência são obrigatórias' }, headers);
+          const account = (await db.query<{ id: string }>('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
+          await db.query('INSERT INTO atmail_notification_preferences (user_id, account_id, enabled, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT(user_id, account_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at', [userId, accountId, input.enabled, Date.now()]);
+          return json(res, 200, { updated: true }, headers);
+        }
+        const accountMatch = url.pathname.match(/^(?:\/api)?\/accounts\/([^/]+)$/);
+        if (req.method === 'DELETE' && accountMatch) {
+          const accountId = decodeURIComponent(accountMatch[1] ?? '');
+          const account = (await db.query<{ id: string }>('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
+          await db.transaction(async (client) => {
+            await client.query('DELETE FROM atmail_notification_preferences WHERE user_id = $1 AND account_id = $2', [userId, accountId]);
+            await client.query('DELETE FROM atmail_credentials WHERE user_id = $1 AND account_id = $2', [userId, accountId]);
+            await client.query('DELETE FROM atmail_accounts WHERE user_id = $1 AND id = $2', [userId, accountId]);
+          });
+          return json(res, 200, { removed: true }, headers);
+        }
         if (req.method === 'GET' && (url.pathname === '/vault' || url.pathname === '/api/vault')) return json(res, 200, await readVault(db, userId, Number(url.searchParams.get('since') ?? 0)), headers);
         if (req.method === 'GET' && (url.pathname === '/accounts' || url.pathname === '/api/accounts')) {
-          const accounts = (await db.query<{ id: string; provider: string; channel: string; email: string; display_name: string; context_id: string; updated_at: string }>('SELECT id, provider, channel, email, display_name, context_id, updated_at FROM atmail_accounts WHERE user_id = $1 ORDER BY updated_at', [userId])).rows;
-          return json(res, 200, { accounts: accounts.map((account) => ({ id: account.id, provider: account.provider, channel: account.channel, transport: 'oauth2-google', email: account.email, displayName: account.display_name, contextId: account.context_id, status: 'connected', secretRef: `server:${account.id}`, createdAt: Number(account.updated_at), updatedAt: Number(account.updated_at) })) }, headers);
+          const accounts = (await db.query<{ id: string; provider: string; channel: string; email: string; display_name: string; context_id: string; updated_at: string; notifications_enabled: boolean }>('SELECT A.id, A.provider, A.channel, A.email, A.display_name, A.context_id, A.updated_at, COALESCE(P.enabled, TRUE) AS notifications_enabled FROM atmail_accounts A LEFT JOIN atmail_notification_preferences P ON P.account_id = A.id AND P.user_id = A.user_id WHERE A.user_id = $1 ORDER BY A.updated_at', [userId])).rows;
+          return json(res, 200, { accounts: accounts.map((account) => ({ id: account.id, provider: account.provider, channel: account.channel, transport: 'oauth2-google', email: account.email, displayName: account.display_name, contextId: account.context_id, status: 'connected', notificationsEnabled: account.notifications_enabled, secretRef: `server:${account.id}`, createdAt: Number(account.updated_at), updatedAt: Number(account.updated_at) })) }, headers);
         }
         if (req.method === 'PUT' && (url.pathname === '/vault' || url.pathname === '/api/vault')) {
           const input = await body(req);
@@ -143,6 +164,19 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const messageIds = Array.isArray(input.messageIds) ? input.messageIds.map(String) : [];
           await markGmailMessagesRead(db, config, userId, accountId, messageIds, input.isRead !== false);
           return json(res, 200, { updated: messageIds.length }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/read-chat' || url.pathname === '/api/messages/read-chat')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
+          const spaceName = String(input.spaceId ?? '');
+          const lastReadTime = Number(input.lastReadTime);
+          if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || !Number.isFinite(lastReadTime) || lastReadTime < 0) {
+            return json(res, 400, { error: 'espaço e horário de leitura inválidos' }, headers);
+          }
+          await markChatSpaceRead(db, config, userId, accountId, spaceName, lastReadTime);
+          return json(res, 200, { updated: true }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/send' || url.pathname === '/api/messages/send')) {
           const input = await body(req);
@@ -179,13 +213,36 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const accountId = String(input.accountId ?? '');
           const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
-          const recipient = String(input.recipient ?? '').trim();
           const message = String(input.body ?? '').trim();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient) || message.length === 0) {
-            return json(res, 400, { error: 'destinatário válido e mensagem são obrigatórios' }, headers);
+          if (message.length === 0) return json(res, 400, { error: 'mensagem é obrigatória' }, headers);
+          const spaceName = String(input.spaceId ?? '').trim();
+          if (spaceName) {
+            const threadName = String(input.threadName ?? '').trim() || undefined;
+            if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || (threadName !== undefined && !/^spaces\/[A-Za-z0-9._-]+\/threads\/[A-Za-z0-9._-]+$/.test(threadName))) {
+              return json(res, 400, { error: 'espaço ou thread inválidos' }, headers);
+            }
+            await sendChatToSpace(db, config, userId, accountId, { spaceName, threadName, body: message });
+            return json(res, 200, { sent: true }, headers);
           }
+          const recipient = String(input.recipient ?? '').trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return json(res, 400, { error: 'destinatário válido é obrigatório' }, headers);
           await sendChat(db, config, userId, accountId, { recipient, body: message });
           return json(res, 200, { sent: true }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/react-chat' || url.pathname === '/api/messages/react-chat')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
+          const messageId = String(input.messageId ?? '');
+          const prefix = `chat:${accountId}:`;
+          const messageName = messageId.startsWith(prefix) ? messageId.slice(prefix.length) : '';
+          const emoji = String(input.emoji ?? '').trim();
+          if (!/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+$/.test(messageName) || Array.from(emoji).length === 0 || Array.from(emoji).length > 8) {
+            return json(res, 400, { error: 'mensagem ou emoji inválidos' }, headers);
+          }
+          await createChatReaction(db, config, userId, accountId, { messageName, emoji });
+          return json(res, 200, { reacted: true }, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
         if (req.method === 'POST' && syncMatch) {
@@ -193,7 +250,7 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const accountId = String(input.accountId ?? '');
           const account = (await db.query<{ context_id: string }>('SELECT context_id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
-          const result = syncMatch[1] === 'gmail' ? await fetchGmail(db, config, userId, accountId, account.context_id) : await fetchChat(db, config, userId, accountId, account.context_id);
+          const result = syncMatch[1] === 'gmail' ? await fetchGmail(db, config, userId, accountId, account.context_id, typeof input.cursor === 'string' ? input.cursor : undefined) : await fetchChat(db, config, userId, accountId, account.context_id);
           return json(res, 200, result, headers);
         }
         return json(res, 404, { error: 'rota não encontrada' }, headers);

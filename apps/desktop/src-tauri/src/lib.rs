@@ -9,6 +9,7 @@ pub fn run() {
         // O login Google precisa abrir o navegador do sistema: a WebView do Tauri
         // não cria abas externas sozinha.
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title("@mail");

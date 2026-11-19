@@ -3,6 +3,7 @@ import type { MailboxAdapter, SyncPage } from '@mail/core';
 import { DEMO_MODE } from './config';
 import { createHttpAdapter, markMessagesRead } from './adapters/sync-client';
 import { readThemeModeSync, writeThemeMode } from './theme-preference';
+import { presentMessageNotification } from './notifications';
 
 const seed = createSeedData();
 
@@ -43,4 +44,20 @@ const adapters: MailboxAdapter[] = DEMO_MODE
       createHttpAdapter('imap', 'email')
     ];
 
-export const syncEngine = new SyncEngine({ store, adapters, concurrency: 3 });
+export const syncEngine = new SyncEngine({
+  store,
+  adapters,
+  concurrency: 3,
+  onNewMessages(account, messages) {
+    if (account.notificationsEnabled === false) return;
+    const snapshot = store.getSnapshot();
+    for (const message of messages) {
+      if (message.isRead) continue;
+      void presentMessageNotification(message, {
+        contexts: snapshot.contexts,
+        activeContext: snapshot.view.contextId,
+        notificationsEnabled: account.notificationsEnabled
+      }).catch(() => undefined);
+    }
+  }
+});

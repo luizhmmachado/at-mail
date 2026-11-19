@@ -16,11 +16,12 @@ import { ensureNotificationPermission } from './src/notifications';
 import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken } from './src/auth';
 import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
-import { sendChatMessage, sendEmail, updateAccountContexts } from './src/adapters/sync-client';
+import { addChatReaction, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
-import type { AccountId, ContextId, UnifiedThread } from '@mail/core';
+import { isChatMessage } from '@mail/core';
+import type { AccountId, ChatMessage, ContextId, UnifiedThread } from '@mail/core';
 
-const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const EMAIL_SYNC_INTERVAL_MS = 30 * 1000;
 const CHAT_SYNC_INTERVAL_MS = 15 * 1000;
 
 function messageOf(error: unknown, fallback: string): string {
@@ -36,14 +37,21 @@ export default function App() {
   const activateSession = useCallback(async (): Promise<void> => {
     const accounts = await fetchAccounts();
     store.actions.replaceAccounts(accounts);
-    setAuthenticated(true);
+    setAuthenticated(accounts.length > 0);
+    setShowWebApp(!isPublicWeb || accounts.length > 0);
+    if (accounts.length === 0) return;
     void syncEngine.syncAll();
-  }, []);
+  }, [isPublicWeb]);
 
   async function handleSend(thread: UnifiedThread, body: string): Promise<void> {
-    if (thread.channel === 'chat') throw new Error('Envio pelo Google Chat ainda não está disponível.');
     const messages = store.getThreadMessages(thread.id);
     const last = messages[messages.length - 1];
+    if (!last) throw new Error('Não encontrei a última mensagem desta conversa.');
+    if (isChatMessage(last)) {
+      await sendChatReply(last.accountId, last.spaceId, last.threadName, body);
+      void syncEngine.syncChannel('chat');
+      return;
+    }
     const recipient = last?.participants.find((participant) => participant.email.length > 0)?.email;
     if (!last || !recipient) throw new Error('Não encontrei um destinatário para responder.');
     await sendEmail(last.accountId, {
@@ -52,12 +60,36 @@ export default function App() {
       body,
       inReplyTo: last.channel === 'email' ? last.rfcMessageId : undefined
     });
-    void syncEngine.syncAll();
+    void syncEngine.syncChannel('email');
+  }
+
+  async function handleReactChat(message: ChatMessage, emoji: string): Promise<void> {
+    if (DEMO_MODE) return;
+    await addChatReaction(message.accountId, message.id, emoji);
+    void syncEngine.syncChannel('chat');
   }
 
   async function moveAccountsToContext(accountIds: AccountId[], contextId: ContextId): Promise<void> {
     if (!DEMO_MODE) await updateAccountContexts(accountIds, contextId);
     for (const accountId of accountIds) store.actions.moveAccountToContext(accountId, contextId);
+  }
+
+  async function removeConnectedAccount(accountId: AccountId): Promise<void> {
+    if (!DEMO_MODE) await removeAccount(accountId);
+    store.actions.removeAccount(accountId);
+    if (store.getSnapshot().accounts.length === 0) {
+      setAuthenticated(false);
+      setShowWebApp(!isPublicWeb);
+    }
+  }
+
+  async function setNotificationsForAccount(accountId: AccountId, enabled: boolean): Promise<void> {
+    if (enabled && !(await ensureNotificationPermission())) {
+      throw new Error('Permita notificações no dispositivo para ativá-las.');
+    }
+    if (!DEMO_MODE) await setAccountNotifications(accountId, enabled);
+    const account = store.accountFor(accountId);
+    if (account !== undefined) store.actions.registerAccount({ ...account, notificationsEnabled: enabled });
   }
 
   async function sendNewMessage(message: NewMessageSubmission): Promise<void> {
@@ -69,14 +101,17 @@ export default function App() {
       if (!recipient) throw new Error('Informe o destinatário do Chat.');
       await sendChatMessage(message.accountId, recipient, message.body);
     }
-    void syncEngine.syncAll();
+    void syncEngine.syncChannel(message.channel);
   }
 
   async function beginAddAccount(): Promise<void> {
     try {
       const state = await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add');
       await awaitGoogleLogin(state);
-      store.actions.replaceAccounts(await fetchAccounts());
+      const accounts = await fetchAccounts();
+      store.actions.replaceAccounts(accounts);
+      setAuthenticated(accounts.length > 0);
+      setShowWebApp(!isPublicWeb || accounts.length > 0);
       void syncEngine.syncAll();
     } catch (error) {
       setAuthError(messageOf(error, 'Falha ao adicionar a conta'));
@@ -103,7 +138,6 @@ export default function App() {
       try {
         if ((await sessionToken()) !== null) {
           await activateSession();
-          setShowWebApp(true);
           return;
         }
         // Um login iniciado antes de o app ser fechado pode já ter sido concluído no navegador.
@@ -112,7 +146,6 @@ export default function App() {
           try {
             await awaitGoogleLogin(pending, { timeoutMs: 8000 });
             await activateSession();
-            setShowWebApp(true);
             return;
           } catch {
             // Sem code pendente: segue para a tela de login.
@@ -129,19 +162,22 @@ export default function App() {
   useEffect(() => {
     if (DEMO_MODE || !authenticated) return;
     const syncIfActive = (): void => {
-      if (AppState.currentState === 'active') void syncEngine.syncAll();
+      if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncAll();
+    };
+    const syncEmailIfActive = (): void => {
+      if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncChannel('email');
     };
     const syncChatIfActive = (): void => {
-      if (AppState.currentState === 'active') void syncEngine.syncChannel('chat');
+      if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncChannel('chat');
     };
     syncIfActive();
-    const interval = setInterval(syncIfActive, SYNC_INTERVAL_MS);
+    const emailInterval = setInterval(syncEmailIfActive, EMAIL_SYNC_INTERVAL_MS);
     const chatInterval = setInterval(syncChatIfActive, CHAT_SYNC_INTERVAL_MS);
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') syncIfActive();
     });
     return () => {
-      clearInterval(interval);
+      clearInterval(emailInterval);
       clearInterval(chatInterval);
       subscription?.remove();
     };
@@ -163,6 +199,8 @@ export default function App() {
             <MailStoreProvider store={store}>
               <AppShell
                 onSend={handleSend}
+                onReactChat={handleReactChat}
+                onReactChat={handleReactChat}
                 onAddAccount={() => void beginAddAccount()}
                 onMoveAccounts={moveAccountsToContext}
                 onSendNewMessage={sendNewMessage}
