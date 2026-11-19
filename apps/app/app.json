@@ -3,7 +3,7 @@
     "name": "@mail",
     "slug": "at-mail",
     "scheme": "atmail",
-    "version": "0.1.0",
+    "version": "0.1.10",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,12 +13,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.atmail.client",
+      "buildNumber": "10",
       "infoPlist": {
         "NSUserTrackingUsageDescription": "Não rastreamos você. Este app não usa identificadores de publicidade."
       }
     },
     "android": {
       "package": "app.atmail.client",
+      "versionCode": 10,
       "adaptiveIcon": {
         "backgroundColor": "#FBFBFA"
       },
