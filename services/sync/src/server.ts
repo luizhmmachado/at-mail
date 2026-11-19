@@ -5,7 +5,7 @@ import { encrypt, hashToken, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser } from './google.js';
 import { body, cors, html, json } from './http.js';
-import { createChatReaction, fetchChat, fetchGmail, markChatSpaceRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, type GmailAttachmentPayload } from './providers.js';
+import { createChatReaction, fetchChat, fetchGmail, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
@@ -171,11 +171,13 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
           const spaceName = String(input.spaceId ?? '');
+          const threadName = String(input.threadName ?? '').trim() || undefined;
           const lastReadTime = Number(input.lastReadTime);
-          if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || !Number.isFinite(lastReadTime) || lastReadTime < 0) {
+          if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || (threadName !== undefined && !new RegExp(`^${spaceName}/threads/[A-Za-z0-9._-]+$`).test(threadName)) || !Number.isFinite(lastReadTime) || lastReadTime < 0) {
             return json(res, 400, { error: 'espaço e horário de leitura inválidos' }, headers);
           }
-          await markChatSpaceRead(db, config, userId, accountId, spaceName, lastReadTime);
+          if (threadName) await markChatThreadRead(db, config, userId, accountId, spaceName, threadName, lastReadTime);
+          else await markChatSpaceRead(db, config, userId, accountId, spaceName, lastReadTime);
           return json(res, 200, { updated: true }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/send' || url.pathname === '/api/messages/send')) {

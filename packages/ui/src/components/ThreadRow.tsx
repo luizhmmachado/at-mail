@@ -73,15 +73,15 @@ export function ThreadRow({
         justifyContent: 'center'
       }}
     >
-      {selected && !mobile && (
+      {(showContextIndicator || (selected && !mobile)) && (
         <View
           style={{
             position: 'absolute',
             left: 0,
             top: 0,
             bottom: 0,
-            width: theme.border.bar,
-            backgroundColor: theme.colors.selectedBar
+            width: showContextIndicator ? 4 : theme.border.bar,
+            backgroundColor: showContextIndicator ? accent : theme.colors.selectedBar
           }}
         />
       )}
@@ -95,17 +95,7 @@ export function ThreadRow({
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: contentInset - inset, alignItems: 'flex-start' }}>
-            <View
-              accessibilityLabel={context === undefined ? undefined : `Contexto ${context.name}`}
-              style={{
-                width: 3,
-                height: mobile ? 20 : 18,
-                backgroundColor: accent,
-                opacity: showContextIndicator ? 1 : 0
-              }}
-            />
-          </View>
+          <View style={{ width: contentInset - inset }} />
           {chatAvatarUrl !== undefined && (
             <Image
               accessibilityLabel={`Foto de ${threadParticipantsLabel(thread, 1)}`}

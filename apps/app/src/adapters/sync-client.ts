@@ -64,10 +64,10 @@ export async function markMessagesRead(messages: readonly MailMessage[], isRead:
   }).then(async (response) => {
     if (!response.ok) throw new Error(`marcar leitura falhou (${response.status})`);
   }));
-  const bySpace = new Map<string, { accountId: string; spaceId: string; messages: ChatMessage[] }>();
+  const bySpace = new Map<string, { accountId: string; spaceId: string; threadName?: string; messages: ChatMessage[] }>();
   for (const message of chatMessages) {
-    const key = `${message.accountId}:${message.spaceId}`;
-    const group = bySpace.get(key) ?? { accountId: message.accountId, spaceId: message.spaceId, messages: [] };
+    const key = `${message.accountId}:${message.spaceId}:${message.threadName ?? 'space'}`;
+    const group = bySpace.get(key) ?? { accountId: message.accountId, spaceId: message.spaceId, ...(message.threadName ? { threadName: message.threadName } : {}), messages: [] };
     group.messages.push(message);
     bySpace.set(key, group);
   }
@@ -77,7 +77,7 @@ export async function markMessagesRead(messages: readonly MailMessage[], isRead:
     requests.push(apiFetch('/messages/read-chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ accountId: group.accountId, spaceId: group.spaceId, lastReadTime })
+      body: JSON.stringify({ accountId: group.accountId, spaceId: group.spaceId, threadName: group.threadName, lastReadTime })
     }).then(async (response) => {
       if (!response.ok) throw new Error(`marcar Chat como lido falhou (${response.status})`);
     }));
