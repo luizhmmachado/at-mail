@@ -389,6 +389,12 @@ function ConversationHeading({
         {thread.subject}
       </Text>
 
+      {thread.channel === 'chat' && (
+        <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
+          {threadParticipantsLabel(thread, 3)}
+        </Text>
+      )}
+
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[3] }}>
         <View
           style={{
@@ -612,7 +618,7 @@ function ChatTimeline({ messages, onReactChat }: { messages: readonly MailMessag
                     color={theme.colors.textPrimary}
                     flush
                   />
-                  <ChatReactionControls message={message} onReactChat={onReactChat} />
+                  {!message.id.includes(':optimistic:') && <ChatReactionControls message={message} onReactChat={onReactChat} />}
                 </View>
               </View>
             </View>

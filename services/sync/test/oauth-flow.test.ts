@@ -6,7 +6,7 @@ import type { SyncConfig } from '../src/config';
 import { hashToken } from '../src/crypto';
 import { serverlessDatabaseUrl } from '../src/db';
 import type { Db } from '../src/db';
-import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
+import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -41,6 +41,18 @@ describe('nome de espaços do Google Chat', () => {
     });
     assert.deepEqual(chatReplyRequest('Olá'), { text: 'Olá' });
     assert.deepEqual(chatReactionRequest('👍'), { emoji: { unicode: '👍' } });
+  });
+
+  it('retorna o identificador e horário da mensagem criada no Chat', () => {
+    assert.deepEqual(chatSendReceipt('spaces/space-1', {
+      name: 'spaces/space-1/messages/message-1',
+      createTime: '2026-11-19T12:00:00Z'
+    }), {
+      messageName: 'spaces/space-1/messages/message-1',
+      spaceResourceName: 'spaces/space-1',
+      receivedAt: Date.parse('2026-11-19T12:00:00Z')
+    });
+    assert.throws(() => chatSendReceipt('spaces/space-1', { name: 'spaces/other/messages/message-1' }));
   });
 
   it('constrói o read-state do Google Chat no caminho users/me', () => {

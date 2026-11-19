@@ -18,11 +18,49 @@ import { restoreThemeMode } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
 import { addChatReaction, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
-import { isChatMessage } from '@mail/core';
-import type { AccountId, ChatMessage, ContextId, UnifiedThread } from '@mail/core';
+import { brand, isChatMessage } from '@mail/core';
+import type { Account, AccountId, ChatMessage, ContextId, UnifiedThread } from '@mail/core';
 
 const EMAIL_SYNC_INTERVAL_MS = 30 * 1000;
-const CHAT_SYNC_INTERVAL_MS = 15 * 1000;
+const CHAT_SYNC_INTERVAL_MS = 5 * 1000;
+
+let optimisticChatMessageSequence = 0;
+
+function nextOptimisticChatMessageName(): string {
+  optimisticChatMessageSequence += 1;
+  return `optimistic:${Date.now()}:${optimisticChatMessageSequence}`;
+}
+
+function createLocalChatMessage(
+  account: Account,
+  messageName: string,
+  spaceResourceName: string,
+  spaceName: string,
+  isDirectMessage: boolean,
+  body: string,
+  receivedAt: number
+): ChatMessage {
+  const senderName = account.displayName.trim() || account.email;
+  return {
+    id: brand.message(`chat:${account.id}:${messageName}`),
+    accountId: account.id,
+    contextId: account.contextId,
+    channel: 'chat',
+    participants: [{ name: senderName, email: account.email }],
+    snippet: body,
+    bodyText: body,
+    receivedAt,
+    isRead: true,
+    isStarred: false,
+    isMentioned: body.includes('@'),
+    labels: [],
+    spaceId: brand.space(spaceResourceName),
+    spaceName,
+    senderName,
+    isDirectMessage,
+    reactions: []
+  };
+}
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -48,7 +86,19 @@ export default function App() {
     const last = messages[messages.length - 1];
     if (!last) throw new Error('Não encontrei a última mensagem desta conversa.');
     if (isChatMessage(last)) {
-      await sendChatReply(last.accountId, last.spaceId, undefined, body);
+      const account = store.accountFor(last.accountId);
+      if (!account) throw new Error('A conta desta conversa não está disponível.');
+      const optimisticName = nextOptimisticChatMessageName();
+      const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now());
+      store.actions.upsertMessages([optimisticMessage]);
+      try {
+        const receipt = await sendChatReply(last.accountId, last.spaceId, undefined, body);
+        store.actions.removeMessages([optimisticMessage.id]);
+        store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt)]);
+      } catch (error) {
+        store.actions.removeMessages([optimisticMessage.id]);
+        throw error;
+      }
       void syncEngine.syncChannel('chat');
       return;
     }
@@ -65,7 +115,18 @@ export default function App() {
 
   async function handleReactChat(message: ChatMessage, emoji: string): Promise<void> {
     if (DEMO_MODE) return;
-    await addChatReaction(message.accountId, message.id, emoji);
+    const reactions = message.reactions ?? [];
+    const existing = reactions.find((reaction) => reaction.emoji === emoji);
+    const optimisticReactions = existing === undefined
+      ? [...reactions, { emoji, count: 1 }]
+      : reactions.map((reaction) => reaction.emoji === emoji ? { ...reaction, count: reaction.count + 1 } : reaction);
+    store.actions.upsertMessages([{ ...message, reactions: optimisticReactions }]);
+    try {
+      await addChatReaction(message.accountId, message.id, emoji);
+    } catch (error) {
+      store.actions.upsertMessages([message]);
+      throw error;
+    }
     void syncEngine.syncChannel('chat');
   }
 
@@ -99,7 +160,20 @@ export default function App() {
     } else {
       const recipient = message.recipients[0];
       if (!recipient) throw new Error('Informe o destinatário do Chat.');
-      await sendChatMessage(message.accountId, recipient, message.body);
+      const account = store.accountFor(message.accountId);
+      if (!account) throw new Error('A conta desta conversa não está disponível.');
+      const optimisticName = nextOptimisticChatMessageName();
+      const optimisticSpaceName = `spaces/pending-${Date.now()}-${optimisticChatMessageSequence}`;
+      const optimisticMessage = createLocalChatMessage(account, optimisticName, optimisticSpaceName, recipient, true, message.body, Date.now());
+      store.actions.upsertMessages([optimisticMessage]);
+      try {
+        const receipt = await sendChatMessage(message.accountId, recipient, message.body);
+        store.actions.removeMessages([optimisticMessage.id]);
+        store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
+      } catch (error) {
+        store.actions.removeMessages([optimisticMessage.id]);
+        throw error;
+      }
     }
     void syncEngine.syncChannel(message.channel);
   }
