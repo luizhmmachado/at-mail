@@ -10,6 +10,8 @@ import {
   normalizeEvent,
   resolveShortcut
 } from '../src/index.ts';
+import { SyncEngine } from '../src/sync/engine.ts';
+import type { MailboxAdapter } from '../src/sync/types.ts';
 
 const NOW = 1_770_000_000_000;
 
@@ -17,6 +19,81 @@ function storeWithSeed() {
   const seed = createSeedData(NOW);
   return createAppStore({ contexts: seed.contexts, accounts: seed.accounts, messages: seed.messages });
 }
+
+describe('sync por canal', () => {
+  it('sincroniza apenas as contas do canal solicitado', async () => {
+    const seed = createSeedData(NOW);
+    const store = createAppStore({ contexts: seed.contexts, accounts: seed.accounts });
+    const synchronizedChannels: string[] = [];
+    const adapters: MailboxAdapter[] = [
+      {
+        provider: 'gmail',
+        channel: 'email',
+        async fetchSince() {
+          synchronizedChannels.push('email');
+          return { messages: [], removedIds: [] };
+        }
+      },
+      {
+        provider: 'google-chat',
+        channel: 'chat',
+        async fetchSince() {
+          synchronizedChannels.push('chat');
+          return { messages: [], removedIds: [] };
+        }
+      }
+    ];
+    const engine = new SyncEngine({ store, adapters });
+
+    await engine.syncChannel('chat');
+
+    assert.ok(synchronizedChannels.length > 0);
+    assert.ok(synchronizedChannels.every((channel) => channel === 'chat'));
+  });
+
+  it('sincroniza Chat enquanto outra conta continua sincronizando', async () => {
+    const seed = createSeedData(NOW);
+    const emailAccount = seed.accounts.find((account) => account.channel === 'email');
+    const chatAccount = seed.accounts.find((account) => account.channel === 'chat');
+    assert.ok(emailAccount !== undefined);
+    assert.ok(chatAccount !== undefined);
+    const store = createAppStore({ contexts: seed.contexts, accounts: [emailAccount, chatAccount] });
+    let releaseEmail!: () => void;
+    let markEmailStarted!: () => void;
+    const emailStarted = new Promise<void>((resolve) => { markEmailStarted = resolve; });
+    const emailBlocked = new Promise<void>((resolve) => { releaseEmail = resolve; });
+    let chatSyncCount = 0;
+    const adapters: MailboxAdapter[] = [
+      {
+        provider: 'gmail',
+        channel: 'email',
+        async fetchSince() {
+          markEmailStarted();
+          await emailBlocked;
+          return { messages: [], removedIds: [] };
+        }
+      },
+      {
+        provider: 'google-chat',
+        channel: 'chat',
+        async fetchSince() {
+          chatSyncCount += 1;
+          return { messages: [], removedIds: [] };
+        }
+      }
+    ];
+    const engine = new SyncEngine({ store, adapters, concurrency: 1 });
+
+    const fullSync = engine.syncAll();
+    await emailStarted;
+    await engine.syncChannel('chat');
+    assert.equal(store.getSnapshot().sync.status, 'syncing');
+    releaseEmail();
+    await fullSync;
+
+    assert.equal(chatSyncCount, 1);
+  });
+});
 
 describe('contextos', () => {
   it('cria os três presets na ordem correta', () => {

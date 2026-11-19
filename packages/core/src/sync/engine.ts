@@ -1,4 +1,4 @@
-import type { Account, AccountId } from '../domain/models';
+import type { Account, AccountId, ChannelKind } from '../domain/models';
 import type { AppStore } from '../state/store';
 import { SyncError, type MailboxAdapter } from './types';
 
@@ -29,7 +29,9 @@ export class SyncEngine {
   private readonly adapters = new Map<string, MailboxAdapter>();
   private readonly concurrency: number;
   private readonly now: () => number;
-  private running?: Promise<SyncOutcome[]>;
+  private readonly runningAccounts = new Map<AccountId, Promise<SyncOutcome>>();
+  private readonly accountSyncVersions = new Map<AccountId, number>();
+  private activeSyncRuns = 0;
 
   constructor(options: SyncEngineOptions) {
     this.store = options.store;
@@ -53,25 +55,26 @@ export class SyncEngine {
     if (account === undefined) {
       return Promise.resolve({ accountId, newMessages: 0, ok: false, error: 'conta inexistente' });
     }
-    return this.runAccount(account);
+    return this.runAccountOnce(account);
   }
 
-  /** Evita sincronizações concorrentes duplicadas na mesma sessão. */
   syncAll(): Promise<SyncOutcome[]> {
-    if (this.running !== undefined) return this.running;
-    this.running = this.runAll().finally(() => {
-      this.running = undefined;
-    });
-    return this.running;
+    return this.runAll();
   }
 
-  private async runAll(): Promise<SyncOutcome[]> {
+  syncChannel(channel: ChannelKind): Promise<SyncOutcome[]> {
+    return this.runAll(channel);
+  }
+
+  private async runAll(channel?: ChannelKind): Promise<SyncOutcome[]> {
+    this.activeSyncRuns += 1;
     const accounts = this.store
       .getSnapshot()
-      .accounts.filter((account) => account.status !== 'reauth-required' && account.status !== 'paused');
+      .accounts.filter((account) => account.status !== 'reauth-required' && account.status !== 'paused' && (channel === undefined || account.channel === channel));
 
     this.store.actions.setSyncState({ status: 'syncing', inFlightAccounts: accounts.map((a) => a.id) });
 
+    const syncVersions = new Map(accounts.map((account) => [account.id, this.accountSyncVersions.get(account.id) ?? 0]));
     const results: SyncOutcome[] = [];
     let cursor = 0;
 
@@ -80,21 +83,37 @@ export class SyncEngine {
         const account = accounts[cursor];
         cursor += 1;
         if (account === undefined) break;
-        results.push(await this.runAccount(account));
+        if ((this.accountSyncVersions.get(account.id) ?? 0) !== syncVersions.get(account.id)) continue;
+        results.push(await this.runAccountOnce(account));
       }
     };
 
     await Promise.all(Array.from({ length: Math.min(this.concurrency, accounts.length) }, worker));
 
     const failed = results.filter((result) => !result.ok);
+    this.activeSyncRuns -= 1;
     this.store.actions.setSyncState({
-      status: failed.length > 0 ? 'error' : 'idle',
-      inFlightAccounts: [],
+      status: this.activeSyncRuns > 0 || this.runningAccounts.size > 0 ? 'syncing' : failed.length > 0 ? 'error' : 'idle',
+      inFlightAccounts: Array.from(this.runningAccounts.keys()),
       lastSyncedAt: this.now(),
       lastError: failed[0]?.error
     });
 
     return results;
+  }
+
+  private runAccountOnce(account: Account): Promise<SyncOutcome> {
+    const running = this.runningAccounts.get(account.id);
+    if (running !== undefined) return running;
+    const request = this.runAccount(account).finally(() => {
+      this.runningAccounts.delete(account.id);
+      this.accountSyncVersions.set(account.id, (this.accountSyncVersions.get(account.id) ?? 0) + 1);
+      if (this.activeSyncRuns > 0) {
+        this.store.actions.setSyncState({ status: 'syncing', inFlightAccounts: Array.from(this.runningAccounts.keys()) });
+      }
+    });
+    this.runningAccounts.set(account.id, request);
+    return request;
   }
 
   private async runAccount(account: Account): Promise<SyncOutcome> {

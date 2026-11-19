@@ -139,12 +139,9 @@ export async function sendChat(
 ): Promise<void> {
   const token = await accessToken(db, config, userId, accountId);
   const requestId = randomUUID();
-  const space = await googleJsonRequest(`https://chat.googleapis.com/v1/spaces:setup?requestId=${requestId}`, token, {
+  const space = await googleJsonRequest('https://chat.googleapis.com/v1/spaces:setup', token, {
     method: 'POST',
-    body: JSON.stringify({
-      space: { spaceType: 'DIRECT_MESSAGE', singleUserBotDm: false },
-      memberships: [{ member: { name: `users/${input.recipient}`, type: 'HUMAN' } }]
-    })
+    body: JSON.stringify(createDirectMessageSetupRequest(input.recipient, requestId))
   });
   const spaceName = typeof space.name === 'string' ? space.name : '';
   if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName)) throw new Error('O Google Chat não retornou um espaço de conversa válido.');
@@ -152,6 +149,18 @@ export async function sendChat(
     method: 'POST',
     body: JSON.stringify({ text: input.body })
   });
+}
+
+export function createDirectMessageSetupRequest(recipient: string, requestId: string): {
+  requestId: string;
+  space: { spaceType: 'DIRECT_MESSAGE'; singleUserBotDm: false };
+  memberships: { member: { name: string; type: 'HUMAN' } }[];
+} {
+  return {
+    requestId,
+    space: { spaceType: 'DIRECT_MESSAGE', singleUserBotDm: false },
+    memberships: [{ member: { name: `users/${recipient}`, type: 'HUMAN' } }]
+  };
 }
 
 function decodeBase64Url(value: string | undefined): string {
@@ -264,13 +273,32 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
   const token = await accessToken(db, config, userId, accountId);
   const currentUser = (await db.query<{ name: string | null }>('SELECT name FROM atmail_users WHERE id = $1', [userId])).rows[0];
   const spaces = await googleJson('https://chat.googleapis.com/v1/spaces?pageSize=100', token);
+  const spaceList = (spaces.spaces ?? []).filter((space: any) => typeof space?.name === 'string');
+  const pages = new Array<any>(spaceList.length);
+  let nextIndex = 0;
+  const fetchWorker = async (): Promise<void> => {
+    while (nextIndex < spaceList.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const space = spaceList[index];
+      if (space !== undefined) pages[index] = await googleJson(chatMessagesUrl(space.name), token);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, spaceList.length) }, fetchWorker));
   const messages: MailMessage[] = [];
-  for (const space of spaces.spaces ?? []) {
-    const page = await googleJson(chatMessagesUrl(space.name), token);
+  for (let index = 0; index < spaceList.length; index += 1) {
+    const space = spaceList[index];
+    const page = pages[index];
+    if (space === undefined || page === undefined) continue;
     const spaceName = resolveChatSpaceName(space, page.messages ?? [], userId, currentUser?.name);
     for (const item of page.messages ?? []) {
       const sender = item.sender?.displayName ?? 'Google Chat';
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [{ name: sender, email: item.sender?.email ?? sender }], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt: Date.parse(item.createTime ?? '') || Date.now(), isRead: true, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE' });
+      const participant = {
+        name: sender,
+        email: item.sender?.email ?? sender,
+        ...(typeof item.sender?.avatarUrl === 'string' ? { avatarUrl: item.sender.avatarUrl } : {})
+      };
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt: Date.parse(item.createTime ?? '') || Date.now(), isRead: true, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE' });
     }
   }
   return { messages, removedIds: [] };
