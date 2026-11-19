@@ -1,4 +1,4 @@
-import { createElement, useMemo, useState, type ReactElement } from 'react';
+import { createElement, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   formatRelativeTime,
@@ -41,6 +41,7 @@ export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactEl
   const actions = useMailActions();
   const messages = useSelectedThreadMessages();
   const { feed } = useFeed();
+  const readerScrollRef = useRef<ScrollView | null>(null);
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
@@ -93,6 +94,7 @@ export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactEl
   const replyTarget = messages.length > 0 ? senderName(messages[messages.length - 1]!) : threadParticipantsLabel(thread, 1);
   const platform = currentPlatform();
   const canModifyEmail = thread.channel !== 'chat';
+  const isChatThread = thread.channel === 'chat';
   const send = async (): Promise<void> => {
     if (!onSend || draft.trim().length === 0 || sending) return;
     setSending(true);
@@ -167,69 +169,55 @@ export function ReaderPane({ thread, onBack, onSend }: ReaderPaneProps): ReactEl
         <IconButton name="chevron-down" label="Próxima conversa" onPress={() => actions.moveSelection(1)} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: theme.layout.readerTitleGap, paddingBottom: theme.space[8] }}>
-        <Text
+      {isChatThread && (
+        <View
           style={{
-            ...typeStyle(theme, mobile ? 'mobileTitle' : 'readerTitle'),
-            color: theme.colors.textPrimary
+            paddingHorizontal: gutter,
+            paddingTop: theme.layout.readerTitleGap,
+            paddingBottom: theme.space[3]
           }}
         >
-          {thread.subject}
-        </Text>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[3] }}>
-          <View
-            style={{
-              height: theme.layout.tagHeight,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              paddingHorizontal: 10,
-              borderRadius: theme.radius.sm,
-              borderWidth: theme.border.hairline,
-              borderColor: theme.colors.borderSubtle,
-              backgroundColor: theme.colors.surfaceSunken
-            }}
-          >
-            <Glyph
-              name={thread.channel === 'chat' ? 'chat' : 'mail'}
-              size={14}
-              color={theme.colors.textSecondary}
-            />
-            <Text style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}>
-              {thread.channel === 'chat' ? 'Chat' : 'E-mail'}
-            </Text>
-            {contextLabels.length > 0 && (
-              <>
-                <View style={{ width: theme.border.hairline, height: 12, backgroundColor: theme.colors.borderSubtle }} />
-                {contextLabels.map((context) => (
-                  <Text
-                    key={context.id}
-                    style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}
-                  >
-                    {context.name}
-                  </Text>
-                ))}
-              </>
-            )}
-          </View>
-          <Text
-            style={{
-              ...typeStyle(theme, 'readerTag'),
-              color: theme.colors.textSecondary,
-              marginLeft: theme.space[4]
-            }}
-          >
-            {messages.length} {messages.length === 1 ? 'mensagem' : 'mensagens'}
-          </Text>
+          <ConversationHeading
+            thread={thread}
+            contextLabels={contextLabels}
+            messageCount={messages.length}
+            mobile={mobile}
+          />
         </View>
+      )}
 
-        <View style={{ marginTop: mobile ? theme.space[5] : theme.space[8], gap: theme.space[6] }}>
-          {messages.map((message, index) =>
-            index === messages.length - 1 ? (
-              <CurrentMessage key={message.id} message={message} />
-            ) : (
-              <EarlierMessage key={message.id} message={message} />
+      <ScrollView
+        ref={readerScrollRef}
+        onContentSizeChange={() => {
+          if (isChatThread) readerScrollRef.current?.scrollToEnd({ animated: false });
+        }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: gutter,
+          paddingTop: isChatThread ? 0 : theme.layout.readerTitleGap,
+          paddingBottom: theme.space[8],
+          ...(isChatThread ? { flexGrow: 1 } : {})
+        }}
+      >
+        {!isChatThread && (
+          <ConversationHeading
+            thread={thread}
+            contextLabels={contextLabels}
+            messageCount={messages.length}
+            mobile={mobile}
+          />
+        )}
+
+        <View style={{ marginTop: isChatThread ? 0 : mobile ? theme.space[5] : theme.space[8], gap: theme.space[6] }}>
+          {isChatThread ? (
+            <ChatTimeline messages={messages} />
+          ) : (
+            messages.map((message, index) =>
+              index === messages.length - 1 ? (
+                <CurrentMessage key={message.id} message={message} />
+              ) : (
+                <EarlierMessage key={message.id} message={message} />
+              )
             )
           )}
         </View>
@@ -376,6 +364,81 @@ function IconButton({
   );
 }
 
+function ConversationHeading({
+  thread,
+  contextLabels,
+  messageCount,
+  mobile
+}: {
+  thread: UnifiedThread;
+  contextLabels: readonly { id: string; name: string }[];
+  messageCount: number;
+  mobile: boolean;
+}): ReactElement {
+  const theme = useTheme();
+  return (
+    <>
+      <Text
+        style={{
+          ...typeStyle(theme, mobile ? 'mobileTitle' : 'readerTitle'),
+          color: theme.colors.textPrimary
+        }}
+      >
+        {thread.subject}
+      </Text>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[3] }}>
+        <View
+          style={{
+            height: theme.layout.tagHeight,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            paddingHorizontal: 10,
+            borderRadius: theme.radius.sm,
+            borderWidth: theme.border.hairline,
+            borderColor: theme.colors.borderSubtle,
+            backgroundColor: theme.colors.surfaceSunken
+          }}
+        >
+          <Glyph
+            name={thread.channel === 'chat' ? 'chat' : 'mail'}
+            size={14}
+            color={theme.colors.textSecondary}
+          />
+          <Text style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}>
+            {thread.channel === 'chat' ? 'Chat' : 'E-mail'}
+          </Text>
+          {contextLabels.length > 0 && (
+            <>
+              <View style={{ width: theme.border.hairline, height: 12, backgroundColor: theme.colors.borderSubtle }} />
+              {contextLabels.map((context) => (
+                <Text
+                  key={context.id}
+                  style={{ ...typeStyle(theme, 'readerTag'), color: theme.colors.textSecondary }}
+                >
+                  {context.name}
+                </Text>
+              ))}
+            </>
+          )}
+        </View>
+        {thread.channel !== 'chat' && (
+          <Text
+            style={{
+              ...typeStyle(theme, 'readerTag'),
+              color: theme.colors.textSecondary,
+              marginLeft: theme.space[4]
+            }}
+          >
+            {messageCount} {messageCount === 1 ? 'mensagem' : 'mensagens'}
+          </Text>
+        )}
+      </View>
+    </>
+  );
+}
+
 function EarlierMessage({ message }: { message: MailMessage }): ReactElement {
   const theme = useTheme();
   return (
@@ -444,16 +507,127 @@ function CurrentMessage({ message }: { message: MailMessage }): ReactElement {
   );
 }
 
+function ChatTimeline({ messages }: { messages: readonly MailMessage[] }): ReactElement {
+  const theme = useTheme();
+  return (
+    <View style={{ gap: theme.space[1] }}>
+      {messages.map((message, index) => {
+        if (!isChatMessage(message)) return null;
+        const previous = messages[index - 1];
+        const previousChat = previous !== undefined && isChatMessage(previous) ? previous : undefined;
+        const startsNewDay = previous === undefined || !sameLocalDay(previous.receivedAt, message.receivedAt);
+        const startsNewGroup =
+          previousChat === undefined ||
+          startsNewDay ||
+          senderName(previousChat) !== senderName(message) ||
+          message.receivedAt - previousChat.receivedAt >= 5 * 60_000;
+        const name = senderName(message);
+
+        return (
+          <View key={message.id}>
+            {startsNewDay && <ChatDateSeparator timestamp={message.receivedAt} isFirst={index === 0} />}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-end',
+                gap: theme.space[3],
+                marginTop: startsNewGroup ? theme.space[2] : theme.space[1]
+              }}
+            >
+              <View
+                style={{
+                  width: 30,
+                  height: startsNewGroup ? 30 : 0,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: theme.radius.pill,
+                  backgroundColor: startsNewGroup ? theme.colors.accentMuted : 'transparent'
+                }}
+              >
+                {startsNewGroup && (
+                  <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.accent }}>
+                    {senderInitials(name)}
+                  </Text>
+                )}
+              </View>
+
+              <View style={{ flexShrink: 1, maxWidth: '90%' }}>
+                {startsNewGroup && (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'baseline',
+                      gap: theme.space[2],
+                      marginBottom: theme.space[1]
+                    }}
+                  >
+                    <Text numberOfLines={1} style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>
+                      {name}
+                    </Text>
+                    <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+                      {formatChatTime(message.receivedAt)}
+                    </Text>
+                  </View>
+                )}
+                <View
+                  style={{
+                    paddingHorizontal: theme.space[3],
+                    paddingVertical: theme.space[2],
+                    borderRadius: theme.radius.lg,
+                    borderWidth: theme.border.hairline,
+                    borderColor: theme.colors.borderSubtle,
+                    backgroundColor: theme.colors.surfaceSunken
+                  }}
+                >
+                  <MessageBody
+                    message={message}
+                    role="readerBody"
+                    color={theme.colors.textPrimary}
+                    flush
+                  />
+                </View>
+              </View>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function ChatDateSeparator({ timestamp, isFirst }: { timestamp: number; isFirst: boolean }): ReactElement {
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space[3],
+        marginTop: isFirst ? 0 : theme.space[5],
+        marginBottom: theme.space[2]
+      }}
+    >
+      <View style={{ flex: 1, height: theme.border.hairline, backgroundColor: theme.colors.divider }} />
+      <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>
+        {formatChatDay(timestamp)}
+      </Text>
+      <View style={{ flex: 1, height: theme.border.hairline, backgroundColor: theme.colors.divider }} />
+    </View>
+  );
+}
+
 const URL_PATTERN = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
 function MessageBody({
   message,
   role,
-  color
+  color,
+  flush = false
 }: {
   message: MailMessage;
   role: 'earlierBody' | 'readerBody';
   color: string;
+  flush?: boolean;
 }): ReactElement {
   const theme = useTheme();
   if (Platform.OS === 'web' && message.channel === 'email' && message.bodyHtml) {
@@ -474,7 +648,14 @@ function MessageBody({
   }
   const parts = message.bodyText.split(URL_PATTERN);
   return (
-    <Text style={{ ...typeStyle(theme, role), color, ...(role === 'readerBody' ? { marginTop: theme.space[2] + 2 } : {}) }}>
+    <Text
+      style={{
+        ...typeStyle(theme, role),
+        color,
+        ...(flush ? { lineHeight: 20 } : {}),
+        ...(!flush && role === 'readerBody' ? { marginTop: theme.space[2] + 2 } : {})
+      }}
+    >
       {parts.map((part, index) => {
         const isUrl = /^(?:https?:\/\/|www\.)/i.test(part);
         if (!isUrl) return part;
@@ -620,6 +801,38 @@ function senderName(message: MailMessage): string {
   const name = message.participants[0]?.name;
   if (name !== undefined && name.length > 0) return name;
   return isChatMessage(message) ? message.senderName : 'Alguém';
+}
+
+function sameLocalDay(firstTimestamp: number, secondTimestamp: number): boolean {
+  const first = new Date(firstTimestamp);
+  const second = new Date(secondTimestamp);
+  return first.getFullYear() === second.getFullYear() &&
+    first.getMonth() === second.getMonth() &&
+    first.getDate() === second.getDate();
+}
+
+function formatChatDay(timestamp: number): string {
+  const date = new Date(timestamp);
+  const today = new Date();
+  if (sameLocalDay(timestamp, today.getTime())) return 'Hoje';
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameLocalDay(timestamp, yesterday.getTime())) return 'Ontem';
+
+  const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long' };
+  if (date.getFullYear() !== today.getFullYear()) options.year = 'numeric';
+  const label = date.toLocaleDateString('pt-BR', options);
+  return `${label.charAt(0).toLocaleUpperCase('pt-BR')}${label.slice(1)}`;
+}
+
+function formatChatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function senderInitials(name: string): string {
+  const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('');
+  return initials.toLocaleUpperCase('pt-BR') || '?';
 }
 
 function extensionLabel(attachment: Attachment): string {

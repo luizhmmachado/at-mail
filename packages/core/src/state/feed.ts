@@ -197,6 +197,7 @@ export function parseQuery(raw: string): SearchClause[] {
 }
 
 function threadHaystack(thread: UnifiedThread): string {
+  if (thread.channel === 'chat') return thread.subject.toLowerCase();
   const parts = [thread.subject, thread.snippet, ...thread.participants.map((p) => `${p.name} ${p.email}`)];
   return parts.join(' ').toLowerCase();
 }
@@ -206,6 +207,7 @@ function matchesClause(thread: UnifiedThread, clause: SearchClause): boolean {
     case 'text':
       return threadHaystack(thread).includes(clause.value);
     case 'from':
+      if (thread.channel === 'chat') return thread.subject.toLowerCase().includes(clause.value);
       return thread.participants.some(
         (participant) =>
           participant.email.toLowerCase().includes(clause.value) ||
