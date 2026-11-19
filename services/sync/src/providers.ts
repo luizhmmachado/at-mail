@@ -202,9 +202,13 @@ function decodeCodePoint(value: number): string {
   return value <= 0x10ffff ? String.fromCodePoint(value) : '\uFFFD';
 }
 
-export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor?: string; removedIds: MessageId[] }> {
+export function gmailMessagesUrl(): string {
+  return 'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50';
+}
+
+export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[] }> {
   const token = await accessToken(db, config, userId, accountId);
-  const list = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50${cursor ? `&pageToken=${encodeURIComponent(cursor)}` : ''}`, token);
+  const list = await googleJson(gmailMessagesUrl(), token);
   const messages: MailMessage[] = [];
   for (const item of list.messages ?? []) {
     const message = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${item.id}?format=full`, token);
@@ -219,7 +223,7 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     const bodies = extractGmailBodies(payload);
     messages.push({ id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email', participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] });
   }
-  return { messages, cursor: list.nextPageToken, removedIds: [] };
+  return { messages, cursor: '', removedIds: [] };
 }
 
 export function resolveChatSpaceName(

@@ -193,7 +193,7 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const accountId = String(input.accountId ?? '');
           const account = (await db.query<{ context_id: string }>('SELECT context_id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
-          const result = syncMatch[1] === 'gmail' ? await fetchGmail(db, config, userId, accountId, account.context_id, input.cursor ? String(input.cursor) : undefined) : await fetchChat(db, config, userId, accountId, account.context_id);
+          const result = syncMatch[1] === 'gmail' ? await fetchGmail(db, config, userId, accountId, account.context_id) : await fetchChat(db, config, userId, accountId, account.context_id);
           return json(res, 200, result, headers);
         }
         return json(res, 404, { error: 'rota não encontrada' }, headers);
