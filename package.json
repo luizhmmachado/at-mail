@@ -12,7 +12,7 @@
   "scripts": {
     "tokens:sync": "node scripts/figma-sync-tokens.mjs",
     "typecheck": "tsc -b --pretty false",
-    "test": "node --import tsx --test packages/core/test/feed.test.ts packages/core/test/store.test.ts services/sync/test/oauth-flow.test.ts apps/app/test/pkce.test.ts apps/app/test/chat-send-receipt.test.ts",
+    "test": "node --import tsx --test packages/core/test/feed.test.ts packages/core/test/store.test.ts services/sync/test/oauth-flow.test.ts apps/app/test/pkce.test.ts apps/app/test/chat-send-receipt.test.ts apps/app/test/email-send.test.ts",
     "build": "npm --workspace apps/app run export:web",
     "web": "npm --workspace apps/app run web",
     "ios": "npm --workspace apps/app run ios",

@@ -11,9 +11,44 @@ import {
   resolveShortcut
 } from '../src/index.ts';
 import { SyncEngine } from '../src/sync/engine.ts';
-import type { MailboxAdapter } from '../src/sync/types.ts';
+import { SyncError, type MailboxAdapter } from '../src/sync/types.ts';
 
 const NOW = 1_770_000_000_000;
+
+describe('tema do sistema', () => {
+  it('inicializa a preferência manual e mantém a opção legada de tema', () => {
+    const manual = createAppStore({ themePreference: 'dark' });
+    manual.actions.applySystemTheme('light');
+    assert.equal(manual.getSnapshot().ui.themeMode, 'dark');
+    assert.equal(manual.getSnapshot().ui.themePreference, 'dark');
+    const legacy = createAppStore({ themeMode: 'dark' });
+    legacy.actions.applySystemTheme('light');
+    assert.equal(legacy.getSnapshot().ui.themeMode, 'dark');
+    assert.equal(legacy.getSnapshot().ui.themePreference, 'dark');
+  });
+
+  it('acompanha mudanças do sistema sem transformar o tema em uma preferência manual', () => {
+    const store = createAppStore();
+    store.actions.applySystemTheme('dark');
+    assert.equal(store.getSnapshot().ui.themeMode, 'dark');
+    assert.equal(store.getSnapshot().ui.themePreference, 'system');
+    store.actions.applySystemTheme('light');
+    assert.equal(store.getSnapshot().ui.themeMode, 'light');
+    assert.equal(store.getSnapshot().ui.themePreference, 'system');
+  });
+
+  it('respeita o tema manual e volta a acompanhar o sistema quando solicitado', () => {
+    const store = createAppStore({ themeMode: 'dark', themePreference: 'system' });
+    store.actions.setThemeMode('light');
+    store.actions.applySystemTheme('dark');
+    assert.equal(store.getSnapshot().ui.themeMode, 'light');
+    assert.equal(store.getSnapshot().ui.themePreference, 'light');
+    store.actions.setThemePreference('system');
+    store.actions.applySystemTheme('dark');
+    assert.equal(store.getSnapshot().ui.themeMode, 'dark');
+    assert.equal(store.getSnapshot().ui.themePreference, 'system');
+  });
+});
 
 function storeWithSeed() {
   const seed = createSeedData(NOW);
@@ -21,6 +56,135 @@ function storeWithSeed() {
 }
 
 describe('sync por canal', () => {
+  it('aplica cada página antes de a varredura terminar e preserva o cursor para retomar falhas', async () => {
+    const seed = createSeedData(NOW);
+    const account = seed.accounts.find((item) => item.channel === 'chat')!;
+    const message = seed.messages.find((item) => item.channel === 'chat')!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    let release!: () => void;
+    let started!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const secondPageStarted = new Promise<void>((resolve) => { started = resolve; });
+    const cursors: (string | undefined)[] = [];
+    let fail = true;
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: 'google-chat', channel: 'chat',
+      async fetchSince(_account, cursor) {
+        cursors.push(cursor);
+        if (cursor === undefined) return { messages: [message], removedIds: [], nextCursor: 'next', hasMore: true };
+        started();
+        await blocked;
+        if (fail) throw new Error('espaço indisponível');
+        return { messages: [], removedIds: [], nextCursor: '' };
+      }
+    }] });
+
+    const sync = engine.syncAccount(account.id);
+    await secondPageStarted;
+    assert.equal(store.getSnapshot().messages.length, 1);
+    assert.equal(store.accountFor(account.id)?.syncCursor, 'next');
+    release();
+    assert.equal((await sync).ok, false);
+    assert.equal(store.accountFor(account.id)?.lastError, 'espaço indisponível');
+    fail = false;
+    assert.equal((await engine.syncAccount(account.id)).ok, true);
+    assert.deepEqual(cursors, [undefined, 'next', 'next']);
+    assert.equal(store.accountFor(account.id)?.syncCursor, '');
+  });
+
+  it('consulta o espaço aberto sem aguardar o sync geral, deduplica consultas e não altera seu cursor', async () => {
+    const seed = createSeedData(NOW);
+    const original = seed.accounts.find((item) => item.channel === 'chat')!;
+    const account = { ...original, syncCursor: 'background-page', lastSyncedAt: NOW - 1000 };
+    const message = seed.messages.find((item) => item.channel === 'chat')!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    let releaseFull!: () => void;
+    let releaseSpace!: () => void;
+    const fullBlocked = new Promise<void>((resolve) => { releaseFull = resolve; });
+    const spaceBlocked = new Promise<void>((resolve) => { releaseSpace = resolve; });
+    let spaceCalls = 0;
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: 'google-chat', channel: 'chat',
+      async fetchSince() {
+        await fullBlocked;
+        return { messages: [], removedIds: [], nextCursor: '' };
+      },
+      async fetchSpace(_account, spaceId) {
+        assert.equal(spaceId, 'spaces/open');
+        spaceCalls += 1;
+        await spaceBlocked;
+        return { messages: [message], removedIds: [], nextCursor: 'not-an-account-cursor' };
+      }
+    }] });
+
+    const full = engine.syncAccount(account.id);
+    const focused = engine.syncSpace(account.id, 'spaces/open');
+    assert.equal(engine.syncSpace(account.id, 'spaces/open'), focused);
+    releaseSpace();
+    assert.equal((await focused).ok, true);
+    assert.equal(spaceCalls, 1);
+    assert.equal(store.getSnapshot().messages.length, 1);
+    assert.equal(store.accountFor(account.id)?.syncCursor, 'background-page');
+    assert.equal(store.accountFor(account.id)?.lastSyncedAt, NOW - 1000);
+    releaseFull();
+    await full;
+    assert.equal(store.getSnapshot().messages.length, 1);
+  });
+
+  it('faz uma consulta nova após a consulta que já estava em andamento ao enviar', async () => {
+    const seed = createSeedData(NOW);
+    const account = seed.accounts[0]!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: account.provider, channel: account.channel,
+      async fetchSince() {
+        calls += 1;
+        if (calls === 1) await blocked;
+        return { messages: [], removedIds: [] };
+      }
+    }] });
+    const beforeSend = engine.syncAccount(account.id);
+    const afterSend = engine.syncAccount(account.id, { afterCurrent: true });
+    assert.equal(calls, 1);
+    release();
+    await Promise.all([beforeSend, afterSend]);
+    assert.equal(calls, 2);
+  });
+
+  it('sinaliza cursor repetido em vez de consultar páginas em loop', async () => {
+    const seed = createSeedData(NOW);
+    const account = seed.accounts[0]!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: account.provider, channel: account.channel,
+      async fetchSince() { return { messages: [], removedIds: [], nextCursor: 'same', hasMore: true }; }
+    }] });
+    const result = await engine.syncAccount(account.id);
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? '', /cursor/);
+  });
+
+  it('limpa um cursor expirado e permite reiniciar a próxima consulta sem perder mensagens', async () => {
+    const seed = createSeedData(NOW);
+    const account = { ...seed.accounts.find((item) => item.channel === 'chat')!, syncCursor: 'expired' };
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts, messages: seed.messages });
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: account.provider, channel: account.channel,
+      async fetchSince(_account, cursor) {
+        if (cursor === 'expired') throw new SyncError('token expirado', 'cursor');
+        assert.equal(cursor, '');
+        return { messages: [], removedIds: [], nextCursor: '' };
+      }
+    }] });
+    assert.equal((await engine.syncAccount(account.id)).ok, false);
+    assert.equal(store.accountFor(account.id)?.syncCursor, '');
+    assert.equal((await engine.syncAccount(account.id)).ok, true);
+    assert.equal(store.getSnapshot().messages.length, seed.messages.length);
+  });
+
   it('notifica apenas mensagens novas após o sync inicial', async () => {
     const seed = createSeedData(NOW);
     const emailAccount = seed.accounts.find((account) => account.channel === 'email');

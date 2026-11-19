@@ -107,9 +107,11 @@ function isSentMessage(message: MailMessage): boolean {
  */
 export function buildUnifiedThreads(messages: readonly MailMessage[]): UnifiedThread[] {
   const threads = new Map<ThreadId, UnifiedThread>();
+  const inboxThreadIds = new Set<ThreadId>();
 
   for (const message of messages) {
     const id = groupingKey(message);
+    if (message.channel === 'email' && message.folder === 'inbox') inboxThreadIds.add(id);
     const existing = threads.get(id);
 
     if (existing === undefined) {
@@ -143,6 +145,10 @@ export function buildUnifiedThreads(messages: readonly MailMessage[]): UnifiedTh
     }
   }
 
+  for (const id of inboxThreadIds) {
+    const thread = threads.get(id);
+    if (thread?.emailFolder === 'sent') thread.emailFolder = 'inbox';
+  }
   return Array.from(threads.values()).sort(compareThreads);
 }
 

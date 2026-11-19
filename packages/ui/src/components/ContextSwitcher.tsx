@@ -192,10 +192,11 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts, 
           <ScrollView contentContainerStyle={{ padding: theme.space[5], paddingTop: theme.space[4] }}>
             {activeTab === 'accounts' ? (
               <>
-            <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>TEMA DA PÁGINA</Text>
+            <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>TEMA DO APLICATIVO</Text>
             <View style={{ flexDirection: 'row', gap: theme.space[2], marginTop: theme.space[2] }}>
-              <ThemeOption label="Claro" selected={snapshot.ui.themeMode === 'light'} onPress={() => actions.setThemeMode('light')} />
-              <ThemeOption label="Escuro" selected={snapshot.ui.themeMode === 'dark'} onPress={() => actions.setThemeMode('dark')} />
+              <ThemeOption label="Sistema" selected={snapshot.ui.themePreference === 'system'} onPress={() => actions.setThemePreference('system')} />
+              <ThemeOption label="Claro" selected={snapshot.ui.themePreference === 'light'} onPress={() => actions.setThemeMode('light')} />
+              <ThemeOption label="Escuro" selected={snapshot.ui.themePreference === 'dark'} onPress={() => actions.setThemeMode('dark')} />
             </View>
 
             <View style={{ marginTop: theme.space[6], marginBottom: theme.space[2] }}>
