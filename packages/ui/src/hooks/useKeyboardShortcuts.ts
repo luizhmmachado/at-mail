@@ -118,9 +118,6 @@ function handleGlobal(
       }
       return false;
     }
-    case 'channel-all':
-      store.actions.setChannel('all');
-      return true;
     case 'channel-email':
       store.actions.setChannel('email');
       return true;

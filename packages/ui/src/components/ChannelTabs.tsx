@@ -11,7 +11,6 @@ export interface ChannelTabsProps {
 }
 
 const TABS: { id: ChannelFilter | 'sent'; label: string }[] = [
-  { id: 'all', label: 'Tudo' },
   { id: 'email', label: 'E-mail' },
   { id: 'sent', label: 'Enviados' },
   { id: 'chat', label: 'Chat' }
