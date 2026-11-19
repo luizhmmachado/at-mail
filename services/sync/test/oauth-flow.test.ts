@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { rootCertificates } from 'node:tls';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';
-import type { Pool, PoolClient, QueryResultRow } from 'pg';
+import { Client, type Pool, type PoolClient, type QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
 import { encrypt, hashToken, pkceChallenge } from '../src/crypto';
-import { serverlessDatabaseUrl } from '../src/db';
+import { databasePoolConfig, serverlessDatabaseUrl } from '../src/db';
+import { SUPABASE_CA } from '../src/supabase-ca';
 import type { Db } from '../src/db';
 import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
@@ -14,6 +16,7 @@ interface PendingRow {
   code: string;
   error: string;
   codeChallenge: string;
+  codeDelivered: boolean;
   createdAt: number;
 }
 
@@ -187,6 +190,25 @@ describe('nome de espaços do Google Chat', () => {
 });
 
 describe('conexão PostgreSQL serverless', () => {
+  it('mantém a CA e a verificação de certificado no cliente pg mesmo com parâmetros TLS no URL do Supabase', () => {
+    for (const host of ['aws-0-region.pooler.supabase.com', 'db.project.supabase.co']) {
+      for (const parameters of ['sslmode=require', 'ssl=true', 'sslmode=require&ssl=true']) {
+        const config = databasePoolConfig(`postgresql://user:pass@${host}:5432/postgres?${parameters}&application_name=atmail`);
+        const client = new Client(config);
+        assert.deepEqual(client.ssl, { ca: [...rootCertificates, SUPABASE_CA], rejectUnauthorized: true });
+        const url = new URL(config.connectionString!);
+        assert.equal(url.searchParams.get('application_name'), 'atmail');
+        assert.equal(url.username, 'user');
+        assert.equal(url.password, 'pass');
+      }
+    }
+  });
+
+  it('preserva os parâmetros TLS explícitos de outros provedores', () => {
+    const config = databasePoolConfig('postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-full');
+    assert.equal(new URL(config.connectionString!).searchParams.get('sslmode'), 'verify-full');
+  });
+
   it('usa transaction pooler do Supabase para hosts compartilhados', () => {
     assert.equal(
       new URL(serverlessDatabaseUrl('postgresql://user:pass@aws-0-region.pooler.supabase.com:5432/postgres')).port,
@@ -306,6 +328,19 @@ function createFakeDb(): {
       if (text.startsWith('UPDATE atmail_sessions SET expires_at') || text.startsWith('DELETE FROM atmail_sessions')) {
         return { rows: [] };
       }
+      if (text.startsWith('INSERT INTO atmail_users') || text.startsWith('INSERT INTO atmail_sessions')) return { rows: [] };
+      if (text.startsWith('INSERT INTO atmail_credentials')) {
+        const [accountId, userId] = values as [string, string];
+        const existing = accounts.get(accountId);
+        if (existing && existing.userId !== userId) return { rows: [] };
+        credentials.add(accountId);
+        return { rows: [{ account_id: accountId } as unknown as T] };
+      }
+      if (text.startsWith('INSERT INTO atmail_accounts')) {
+        const [accountId, userId, provider, channel, email, , contextId] = values as [string, string, string, string, string, string, string];
+        if (!accounts.has(accountId)) accounts.set(accountId, { userId, provider, channel, email, contextId });
+        return { rows: [] };
+      }
       if (text.startsWith('INSERT INTO atmail_login_attempts')) {
         const [bucket, key, windowStart] = values as [string, string, number];
         const id = `${bucket}:${key}`;
@@ -386,10 +421,10 @@ function createFakeDb(): {
       }
       if (text.startsWith('INSERT INTO atmail_oauth_pending')) {
         const [state, code, error, codeChallenge, createdAt] = values as [string, string, string, string, number];
-        rows.set(state, { code, error, codeChallenge, createdAt });
+        rows.set(state, { code, error, codeChallenge, codeDelivered: false, createdAt });
         return { rows: [] };
       }
-      if (text.startsWith('UPDATE atmail_oauth_pending')) {
+      if (text.startsWith('UPDATE atmail_oauth_pending SET code =')) {
         const [code, error, state, since] = values as [string, string, string, number];
         const row = rows.get(state);
         if (!row || row.createdAt <= since) return { rows: [] };
@@ -397,11 +432,11 @@ function createFakeDb(): {
         row.error = error;
         return { rows: [{ state } as unknown as T] };
       }
-      if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE state = $1 AND created_at > $2 AND')) {
+      if (text.startsWith('UPDATE atmail_oauth_pending SET code_delivered = TRUE')) {
         const [state, since] = values as [string, number];
         const row = rows.get(state);
-        if (!row || row.createdAt <= since || (row.code === '' && row.error === '')) return { rows: [] };
-        rows.delete(state);
+        if (!row || row.createdAt <= since || row.codeDelivered || (row.code === '' && row.error === '')) return { rows: [] };
+        row.codeDelivered = true;
         return { rows: [{ code: row.code, error: row.error } as unknown as T] };
       }
       if (text.startsWith('DELETE FROM atmail_oauth_pending WHERE state = $1 AND code = $2')) {
@@ -482,6 +517,48 @@ async function startLogin(app: AppServer, ip: string, platform?: string, origin?
 }
 
 describe('fluxo OAuth do backend', () => {
+  it('conclui callback, polling e exchange com PKCE sem permitir reutilizar código ou sessão pendente', async (t) => {
+    const { db, rows, accounts, credentials } = createFakeDb();
+    const app = await createAppServer(config, db);
+    const ip = '10.0.0.30';
+    const { state, verifier } = await startLogin(app, ip, 'android');
+    let tokenRequests = 0;
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token') {
+        tokenRequests += 1;
+        const payload = new URLSearchParams(String(init?.body));
+        assert.equal(payload.get('code'), 'LOGIN_CODE');
+        assert.equal(payload.get('code_verifier'), verifier);
+        assert.equal(payload.get('redirect_uri'), config.redirectUri);
+        return new Response(JSON.stringify({ access_token: 'test-access-token', refresh_token: 'test-refresh-token' }));
+      }
+      if (url === 'https://openidconnect.googleapis.com/v1/userinfo') {
+        return new Response(JSON.stringify({ sub: 'user-1', email: 'test@example.com', email_verified: true }));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await call(app, 'GET', `/auth/google/callback?code=LOGIN_CODE&state=${encodeURIComponent(state)}`, ip);
+    const pollPayload = JSON.stringify({ state });
+    const polled = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, pollPayload);
+    assert.deepEqual(JSON.parse(polled.body), { code: 'LOGIN_CODE' });
+    const polledAgain = await call(app, 'POST', '/auth/google/code', ip, undefined, undefined, pollPayload);
+    assert.deepEqual(JSON.parse(polledAgain.body), { pending: true });
+
+    const exchangePayload = JSON.stringify({ state, code: 'LOGIN_CODE', codeVerifier: verifier });
+    const exchanged = await call(app, 'POST', '/auth/google/exchange', ip, undefined, undefined, exchangePayload);
+    assert.equal(exchanged.status, 200, exchanged.body);
+    assert.equal(typeof JSON.parse(exchanged.body).sessionToken, 'string');
+    assert.equal(accounts.size, 2);
+    assert.equal(credentials.size, 2);
+    assert.equal(rows.has(state), false);
+    const replayed = await call(app, 'POST', '/auth/google/exchange', ip, undefined, undefined, exchangePayload);
+    assert.equal(replayed.status, 400);
+    assert.equal(tokenRequests, 1);
+    await app.close();
+  });
+
   it('persiste preferência de notificações por conta', async () => {
     const { db, accounts, notifications } = createFakeDb();
     accounts.set('gmail-account', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email', email: 'pessoa@example.com' });

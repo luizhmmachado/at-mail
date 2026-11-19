@@ -47,3 +47,7 @@ No mobile: lista → leitor com "voltar" no topo; contextos em pills horizontais
 - [x] Política única de notificação por contexto (mobile usa `expo-notifications`)
 - [x] Tokens do Figma como fonte única, com script de sincronização auditável
 - [x] Testes de mesa das regras de feed, store e atalhos (`npm test`)
+
+O backend valida o certificado e o hostname das conexões PostgreSQL do Supabase usando a CA pública oficial em [`services/sync/src/supabase-ca.ts`](services/sync/src/supabase-ca.ts). Parâmetros `sslmode`/`ssl` no URL não substituem essa configuração. Ao renovar a CA do provedor, atualize esse certificado; não desative a validação TLS.
+
+O fluxo OAuth com PKCE vinculado ao estado exige Android/desktop **v0.1.12 ou posterior** e o frontend web atualizado junto com o backend. Versões anteriores não são compatíveis com esse contrato. O polling entrega o código uma única vez, mas preserva seu vínculo PKCE até a troca final por uma sessão.
