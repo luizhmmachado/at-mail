@@ -1,6 +1,6 @@
 [package]
 name = "at-mail-desktop"
-version = "0.1.10"
+version = "0.1.11"
 description = "@mail — launcher unificado de e-mail e Google Chat"
 authors = ["@mail"]
 edition = "2021"

@@ -1,15 +1,15 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import type { ThemeMode } from '@mail/core';
+import type { ThemePreference } from '@mail/core';
 
 const THEME_KEY = 'atmail.ui.theme';
 
-function normalize(value: string | null | undefined): ThemeMode | undefined {
-  return value === 'light' || value === 'dark' ? value : undefined;
+function normalize(value: string | null | undefined): ThemePreference | undefined {
+  return value === 'light' || value === 'dark' || value === 'system' ? value : undefined;
 }
 
 /** Leitura síncrona (web/desktop), para o tema já nascer certo no primeiro render. */
-export function readThemeModeSync(): ThemeMode | undefined {
+export function readThemePreferenceSync(): ThemePreference | undefined {
   if (Platform.OS !== 'web') return undefined;
   try {
     return normalize(globalThis.localStorage?.getItem(THEME_KEY));
@@ -19,8 +19,8 @@ export function readThemeModeSync(): ThemeMode | undefined {
 }
 
 /** No mobile o SecureStore é assíncrono, então a restauração acontece ao montar o app. */
-export async function restoreThemeMode(): Promise<ThemeMode | undefined> {
-  const sync = readThemeModeSync();
+export async function restoreThemePreference(): Promise<ThemePreference | undefined> {
+  const sync = readThemePreferenceSync();
   if (sync !== undefined) return sync;
   if (Platform.OS === 'web') return undefined;
   try {
@@ -30,7 +30,7 @@ export async function restoreThemeMode(): Promise<ThemeMode | undefined> {
   }
 }
 
-export function writeThemeMode(mode: ThemeMode): void {
+export function writeThemePreference(mode: ThemePreference): void {
   try {
     if (Platform.OS === 'web') {
       globalThis.localStorage?.setItem(THEME_KEY, mode);

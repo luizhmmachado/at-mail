@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { SyncConfig } from '../src/config';
-import { hashToken } from '../src/crypto';
+import { encrypt, hashToken } from '../src/crypto';
 import { serverlessDatabaseUrl } from '../src/db';
 import type { Db } from '../src/db';
 import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
@@ -28,10 +28,82 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('sincroniza páginas de espaços e consulta a conversa aberta sem listar os outros espaços', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('chat-1', { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    credentials.add('chat-1');
+    const urls: URL[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      urls.push(url);
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname === '/v1/spaces') {
+        assert.equal(url.searchParams.get('pageSize'), '5');
+        return Response.json(url.searchParams.get('pageToken') === 'page-2'
+          ? { spaces: [{ name: 'spaces/second', displayName: 'Second' }] }
+          : { spaces: [{ name: 'spaces/first', displayName: 'First' }], nextPageToken: 'page-2' });
+      }
+      if (url.pathname === '/v1/spaces/open') return Response.json({ name: 'spaces/open', displayName: 'Open' });
+      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{
+        name: `${url.pathname.slice(4, -9)}/messages/message-1`, text: 'Nova mensagem',
+        createTime: '2026-11-19T12:00:00Z', thread: { name: 'spaces/open/threads/root' }, threadReply: true
+      }] });
+      if (url.pathname.endsWith('/spaceReadState')) return Response.json({ lastReadTime: '2026-11-18T12:00:00Z' });
+      throw new Error(`URL não esperada: ${url}`);
+    });
+    const app = await createAppServer(config, db);
+    const sync = (input: object) => call(app, 'POST', '/sync/google-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'chat-1', ...input }));
+    const first = await sync({});
+    assert.equal(first.status, 200);
+    assert.equal(JSON.parse(first.body).cursor, 'page-2');
+    assert.equal(JSON.parse(first.body).hasMore, true);
+    const second = await sync({ cursor: 'page-2' });
+    assert.equal(JSON.parse(second.body).hasMore, false);
+    assert.equal(JSON.parse(second.body).cursor, '');
+    urls.length = 0;
+    const focused = await sync({ spaceId: 'spaces/open' });
+    assert.equal(focused.status, 200);
+    assert.equal(JSON.parse(focused.body).messages[0].isThreadReply, true);
+    assert.equal(urls.some((url) => url.pathname === '/v1/spaces'), false);
+    urls.length = 0;
+    assert.equal((await sync({ spaceId: 'spaces/open/../../other' })).status, 400);
+    assert.equal((await call(app, 'POST', '/sync/google-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'other', spaceId: 'spaces/open' }))).status, 404);
+    assert.equal(urls.length, 0);
+  });
+
   it('localiza uma conversa direta existente pelo e-mail', () => {
     const url = new URL(chatDirectMessageUrl('pessoa@example.com'));
     assert.equal(url.pathname, '/v1/spaces:findDirectMessage');
     assert.equal(url.searchParams.get('name'), 'users/pessoa@example.com');
+  });
+
+  describe('recibo de envio de e-mail', () => {
+    it('devolve os identificadores do Gmail e mantém a thread original ao responder', async (t) => {
+      const { db, accounts, credentials } = createFakeDb();
+      accounts.set('mail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+      credentials.add('mail-1');
+      t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+        assert.equal(url, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
+        const payload = JSON.parse(String(init?.body));
+        assert.equal(payload.threadId, 'thread-1');
+        assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /In-Reply-To: <original@example.com>/);
+        assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /Message-ID: <[^>]+@atmail.local>/);
+        return Response.json({ id: 'mail-message-1', threadId: 'thread-1' });
+      });
+      const result = await call(await createAppServer(config, db), 'POST', '/messages/send', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({
+        accountId: 'mail-1', to: ['other@example.com'], subject: 'Re: Test', body: 'Reply',
+        inReplyTo: '<original@example.com>', providerThreadId: 'thread-1'
+      }));
+      assert.equal(result.status, 200);
+      const receipt = JSON.parse(result.body);
+      assert.equal(receipt.sent, true);
+      assert.equal(receipt.messageId, 'mail-message-1');
+      assert.equal(receipt.threadId, 'thread-1');
+      assert.ok(Number.isFinite(receipt.receivedAt));
+      assert.match(receipt.rfcMessageId, /^<[^>]+@atmail.local>$/);
+    });
   });
 
   it('responde no espaço/thread existente e cria reações com emoji Unicode', () => {
@@ -235,6 +307,18 @@ function createFakeDb(): {
         if (!account || account.userId !== userId) return { rows: [] };
         return { rows: [{ provider: account.provider ?? 'gmail', channel: account.channel ?? 'email' } as unknown as T] };
       }
+      if (text.startsWith('SELECT context_id FROM atmail_accounts')) {
+        const [accountId, userId] = values as [string, string];
+        const account = accounts.get(accountId);
+        return { rows: account?.userId === userId ? [{ context_id: account.contextId } as unknown as T] : [] };
+      }
+      if (text.startsWith('SELECT encrypted_refresh_token, email FROM atmail_credentials')) {
+        const [accountId, userId] = values as [string, string];
+        return { rows: credentials.has(accountId) && accounts.get(accountId)?.userId === userId
+          ? [{ encrypted_refresh_token: encrypt('test-refresh-token', config.encryptionKey), email: 'test@example.com' } as unknown as T] : [] };
+      }
+      if (text.startsWith('SELECT name FROM atmail_users')) return { rows: [{ name: 'Test User' } as unknown as T] };
+      if (text.startsWith('SELECT thread_name, last_read_time FROM atmail_chat_thread_read_states')) return { rows: [] };
       if (text.startsWith('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2')) {
         const [accountId, userId] = values as [string, string];
         return { rows: accounts.get(accountId)?.userId === userId ? [{ id: accountId } as unknown as T] : [] };
