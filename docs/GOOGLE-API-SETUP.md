@@ -80,7 +80,6 @@ Variáveis do projeto `at-mail-sync-legacy` (Vercel → Settings → Environment
 | `GOOGLE_OAUTH_CLIENT_SECRET` | segredo do mesmo client Web |
 | `GOOGLE_OAUTH_REDIRECT_URI` | `https://at-mail-sync-legacy.vercel.app/auth/google/callback` |
 | `TOKEN_ENCRYPTION_KEY` | 32 bytes em base64 (`openssl rand -base64 32`) |
-| `SESSION_SECRET` | string aleatória longa |
 | `DATABASE_URL` | Postgres (o schema é criado no boot) |
 | `PUBLIC_ORIGINS` | origens permitidas pelo CORS, separadas por vírgula (ex.: `https://at-mail.vercel.app,http://tauri.localhost,tauri://localhost`) |
 

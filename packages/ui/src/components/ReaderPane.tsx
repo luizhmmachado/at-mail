@@ -801,21 +801,48 @@ function MessageBody({
   flush?: boolean;
 }): ReactElement {
   const theme = useTheme();
+  // Imagens remotas só carregam depois de um clique explícito: sem isso cada
+  // abertura do e-mail avisa o remetente (IP, horário e confirmação de leitura).
+  const [imagesAllowed, setImagesAllowed] = useState(false);
   if (Platform.OS === 'web' && message.channel === 'email' && message.bodyHtml) {
-    return createElement('iframe', {
+    const iframe = createElement('iframe', {
       title: `Corpo do e-mail: ${message.subject}`,
       sandbox: '',
       referrerPolicy: 'no-referrer',
-      srcDoc: emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary),
+      srcDoc: emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary, imagesAllowed),
       style: {
         display: 'block',
         width: '100%',
         height: role === 'readerBody' ? 560 : 260,
-        marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0,
         border: 0,
         backgroundColor: theme.colors.surface
       }
     });
+    if (imagesAllowed) {
+      return <View style={{ width: '100%', marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0 }}>{iframe}</View>;
+    }
+    return (
+      <View style={{ width: '100%', marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Carregar imagens deste remetente"
+          onPress={() => setImagesAllowed(true)}
+          style={{
+            alignSelf: 'flex-start',
+            marginBottom: theme.space[2],
+            paddingHorizontal: theme.space[3],
+            paddingVertical: 6,
+            borderRadius: theme.radius.pill,
+            borderWidth: theme.border.hairline,
+            borderColor: theme.colors.borderSubtle,
+            backgroundColor: theme.colors.surface
+          }}
+        >
+          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Carregar imagens deste remetente</Text>
+        </Pressable>
+        {iframe}
+      </View>
+    );
   }
   const parts = message.bodyText.split(URL_PATTERN);
   return (
@@ -847,12 +874,14 @@ function MessageBody({
   );
 }
 
-function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string): string {
+function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string, imagesAllowed = false): string {
   const themedBodyHtml = mode === 'dark' ? adaptEmailColors(bodyHtml, surface, text) : bodyHtml;
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
-  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
+  // Sem permissão explícita apenas imagens embutidas (data:) são renderizadas.
+  const imageSources = imagesAllowed ? 'https: data:' : 'data:';
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${imageSources}; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
   if (headClose.test(themedBodyHtml)) return themedBodyHtml.replace(headClose, (head) => `${headContent}${head}`);
