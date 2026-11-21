@@ -94,11 +94,15 @@ describe('nome de espaços do Google Chat', () => {
         assert.equal(payload.threadId, 'thread-1');
         assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /In-Reply-To: <original@example.com>/);
         assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /Message-ID: <[^>]+@atmail.local>/);
+        assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /filename="reply\.png"/);
+        assert.match(Buffer.from(payload.raw, 'base64url').toString('utf8'), /YWJj/);
+        assert.ok(Buffer.from(payload.raw, 'base64url').toString('utf8').includes(Buffer.from('<strong>Reply</strong>').toString('base64')));
         return Response.json({ id: 'mail-message-1', threadId: 'thread-1' });
       });
       const result = await call(await createAppServer(config, db), 'POST', '/messages/send', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({
         accountId: 'mail-1', to: ['other@example.com'], subject: 'Re: Test', body: 'Reply',
-        inReplyTo: '<original@example.com>', providerThreadId: 'thread-1'
+        inReplyTo: '<original@example.com>', providerThreadId: 'thread-1', bodyHtml: '<strong>Reply</strong>',
+        attachments: [{ fileName: 'reply.png', mimeType: 'image/png', base64: 'YWJj' }]
       }));
       assert.equal(result.status, 200);
       const receipt = JSON.parse(result.body);
@@ -307,6 +311,19 @@ describe('sincronização do Gmail', () => {
 });
 
 describe('montagem MIME do e-mail', () => {
+  it('envia texto e HTML formatado com ou sem anexos', () => {
+    for (const attachments of [[], [{ fileName: 'imagem.png', mimeType: 'image/png', base64: 'YWJj' }]]) {
+      const mime = Buffer.from(createGmailRawMessage({ to: ['destino@example.com'], body: '**Olá**', bodyHtml: '<p><strong>Olá</strong></p>', attachments }), 'base64url').toString('utf8');
+      assert.match(mime, /Content-Type: multipart\/alternative/);
+      assert.match(mime, /Content-Type: text\/plain/);
+      assert.match(mime, /Content-Type: text\/html/);
+      assert.ok(mime.includes(Buffer.from('<p><strong>Olá</strong></p>').toString('base64')));
+      if (attachments.length > 0) {
+        assert.match(mime, /Content-Type: multipart\/mixed/);
+        assert.match(mime, /filename="imagem\.png"/);
+      }
+    }
+  });
   it('preserva o HTML original e não expõe CSS no texto de fallback', () => {
     const bodyHtml = '<html><head><style>.promo{color:red}</style></head><body><table><tr><td>Oferta</td></tr></table></body></html>';
     const payload = {

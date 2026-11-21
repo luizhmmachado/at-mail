@@ -16,7 +16,7 @@ type MobilePane = 'list' | 'reader';
 
 export interface AppShellProps {
   appIcon?: ImageSourcePropType;
-  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[]) => Promise<void>;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[], formatted?: boolean) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;

@@ -1,24 +1,37 @@
-import { useState, type ReactElement } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { useEffect, useRef, useState, type ComponentRef, type ReactElement, type RefObject } from 'react';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import type { Account, AccountId, ChannelKind } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { typeStyle } from '../theme/typography';
 import { Glyph } from './LucideGlyph';
+import { appendClipboardImages, MAX_ATTACHMENTS, MAX_ATTACHMENTS_BYTES, type MessageAttachment } from './clipboard-attachments';
 
-const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+export type NewMessageAttachment = MessageAttachment;
 
-export interface NewMessageAttachment {
-  fileName: string;
-  mimeType: string;
-  sizeInBytes: number;
-  base64: string;
+export function useImagePaste(input: RefObject<ComponentRef<typeof TextInput> | null>, attachments: NewMessageAttachment[], enabled: boolean, onChange: (attachments: NewMessageAttachment[]) => void, onError: (message: string) => void): void {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !enabled) return;
+    const onPaste = (event: ClipboardEvent): void => {
+      if (event.target !== input.current as unknown as EventTarget || !event.clipboardData) return;
+      const files = Array.from(event.clipboardData.files);
+      if (files.length === 0) {
+        for (const item of Array.from(event.clipboardData.items)) {
+          const file = item.kind === 'file' ? item.getAsFile() : null;
+          if (file) files.push(file);
+        }
+      }
+      if (!files.some((file) => file.type.startsWith('image/'))) return;
+      void appendClipboardImages(attachments, files).then(onChange).catch((error) => onError(error instanceof Error ? error.message : 'Não foi possível colar a imagem.'));
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [input, attachments, enabled, onChange, onError]);
 }
 
 export async function selectMessageAttachments(attachments: NewMessageAttachment[]): Promise<NewMessageAttachment[]> {
-  const result = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true });
+  const result = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true, base64: true });
   if (result.canceled) return attachments;
   if (attachments.length + result.assets.length > MAX_ATTACHMENTS) throw new Error(`Adicione no máximo ${MAX_ATTACHMENTS} arquivos por mensagem.`);
   const next = [...attachments];
@@ -64,6 +77,8 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
   const [attachments, setAttachments] = useState<NewMessageAttachment[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  const bodyInput = useRef<ComponentRef<typeof TextInput> | null>(null);
+  useImagePaste(bodyInput, attachments, visible && !sending, setAttachments, setError);
 
   const availableAccounts = accounts.filter((account) => account.channel === channel);
   const selectedAccount = availableAccounts.find((account) => account.id === accountId) ?? availableAccounts[0];
@@ -159,7 +174,7 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
               style={{ ...typeStyle(theme, 'body'), minHeight: 44, marginTop: 6, paddingHorizontal: 12, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle, borderRadius: theme.radius.lg, color: theme.colors.textPrimary }}
             />
 
-            {(
+            {channel === 'email' && (
               <>
                 <Text style={{ ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary, marginTop: 16 }}>ASSUNTO</Text>
                 <TextInput
@@ -175,6 +190,7 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
 
             <Text style={{ ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary, marginTop: 16 }}>MENSAGEM</Text>
             <TextInput
+              ref={bodyInput}
               accessibilityLabel="Corpo da mensagem"
               multiline
               value={body}
@@ -185,7 +201,7 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
               style={{ ...typeStyle(theme, 'composeBody'), minHeight: 140, marginTop: 6, padding: 12, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle, borderRadius: theme.radius.lg, color: theme.colors.textPrimary }}
             />
 
-            {channel === 'email' && (
+            {(
               <View style={{ marginTop: 12 }}>
                 <Pressable accessibilityRole="button" accessibilityLabel="Anexar arquivos" onPress={() => void pickAttachments()} style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Glyph name="attach" size={17} color={theme.colors.textSecondary} />

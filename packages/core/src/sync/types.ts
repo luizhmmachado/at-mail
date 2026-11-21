@@ -13,6 +13,7 @@ export interface SendRequest {
   to: string[];
   subject?: string;
   body: string;
+  bodyHtml?: string;
   inReplyTo?: string;
   providerThreadId?: string;
 }

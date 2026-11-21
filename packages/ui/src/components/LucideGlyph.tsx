@@ -3,12 +3,14 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  Bold,
   ChevronDown,
   ChevronUp,
   Clock3,
   Ellipsis,
   FileText,
   Inbox,
+  Italic,
   Mail,
   MessageSquare,
   Paperclip,
@@ -18,7 +20,9 @@ import {
   Settings,
   SquarePen,
   Star,
+  Strikethrough,
   Trash2,
+  Type,
   UserRound
 } from 'lucide-react-native';
 import type { ReactElement } from 'react';
@@ -44,7 +48,11 @@ const icons = {
   attach: Paperclip,
   file: FileText,
   inbox: Inbox,
-  star: Star
+  star: Star,
+  bold: Bold,
+  italic: Italic,
+  strikethrough: Strikethrough,
+  format: Type
 } as const;
 
 export type GlyphName = keyof typeof icons;

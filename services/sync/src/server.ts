@@ -292,12 +292,13 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
             attachments.push({ fileName, mimeType, base64 });
           }
           const bodyText = String(input.body ?? '');
+          const bodyHtml = typeof input.bodyHtml === 'string' ? input.bodyHtml : undefined;
           if (!bodyText.trim() && attachments.length === 0) return json(res, 400, { error: 'corpo ou anexo são obrigatórios' }, headers);
           const providerThreadId = typeof input.providerThreadId === 'string' ? input.providerThreadId : undefined;
           if (providerThreadId !== undefined && !/^[a-zA-Z0-9_-]+$/.test(providerThreadId)) {
             return json(res, 400, { error: 'thread de e-mail inválida' }, headers);
           }
-          const receipt = await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: bodyText, inReplyTo, providerThreadId, attachments });
+          const receipt = await sendGmail(db, config, userId, accountId, { to, subject: input.subject ? String(input.subject) : undefined, body: bodyText, bodyHtml, inReplyTo, providerThreadId, attachments });
           return json(res, 200, { sent: true, ...receipt }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/send-chat' || url.pathname === '/api/messages/send-chat')) {
