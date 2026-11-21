@@ -8,5 +8,8 @@
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.74.0"
+  },
+  "dependencies": {
+    "node-html-parser": "^9.0.7"
   }
 }

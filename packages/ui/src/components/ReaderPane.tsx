@@ -27,7 +27,7 @@ import { Glyph, type GlyphName } from './LucideGlyph';
 import { selectMessageAttachments, useImagePaste, type NewMessageAttachment } from './NewMessageComposer';
 import { isTextFormatted, toggleTextFormat } from './text-format';
 import { NativeEmailHtml } from './NativeEmailHtml';
-import { emailContentSecurityPolicy, emailImagePreferenceKey } from './email-html-policy';
+import { emailContentSecurityPolicy, emailImagePreferenceKey, EMAIL_LINK_BRIDGE_SCRIPT, prepareEmailHtml, safeMessageLink } from './email-html-policy';
 
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
@@ -721,7 +721,7 @@ function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages:
                     flush
                   />
                   {message.attachments?.map((attachment) => (
-                    <Pressable key={attachment.id} accessibilityRole="link" accessibilityLabel={`Abrir anexo ${attachment.fileName}`} disabled={!attachment.downloadUrl} onPress={() => attachment.downloadUrl && void Linking.openURL(attachment.downloadUrl)} style={{ marginTop: theme.space[2], gap: theme.space[1] }}>
+                    <Pressable key={attachment.id} accessibilityRole="link" accessibilityLabel={`Abrir anexo ${attachment.fileName}`} disabled={!attachment.downloadUrl} onPress={() => attachment.downloadUrl && void openMessageLink(attachment.downloadUrl).catch((error) => console.error('Não foi possível abrir o anexo.', error))} style={{ marginTop: theme.space[2], gap: theme.space[1] }}>
                       {attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl && <Image source={{ uri: attachment.thumbnailUrl }} resizeMode="contain" style={{ width: 200, maxWidth: '100%', height: 150 }} />}
                       <Text selectable style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.accent }}>{attachment.fileName}</Text>
                     </Pressable>
@@ -827,6 +827,19 @@ function ChatDateSeparator({ timestamp, isFirst }: { timestamp: number; isFirst:
 
 const URL_PATTERN = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
+async function openMessageLink(value: string): Promise<void> {
+  const url = safeMessageLink(value);
+  if (!url) return;
+  if (Platform.OS === 'web' && '__TAURI_INTERNALS__' in globalThis) {
+    const opener = await import('@tauri-apps/plugin-opener');
+    await opener.openUrl(url);
+  } else if (Platform.OS === 'web') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  } else {
+    await Linking.openURL(url);
+  }
+}
+
 function MessageBody({
   message,
   role,
@@ -841,10 +854,21 @@ function MessageBody({
   const theme = useTheme();
   const [imagePreferences, setImagePreferences] = useState<Record<string, boolean>>({});
   const [nativePreference, setNativePreference] = useState<{ sender: string; blocked: boolean }>();
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const sender = message.participants[0]?.email.trim().toLowerCase() ?? '';
   const preferenceKey = `atmail.images.blocked:${sender}`;
   const nativePreferenceKey = emailImagePreferenceKey(sender);
   const hasEmailHtml = message.channel === 'email' && Boolean(message.bodyHtml);
+  const preparedHtml = useMemo(() => message.channel === 'email' && message.bodyHtml ? prepareEmailHtml(message.bodyHtml, Platform.OS === 'web') : undefined, [message.channel, message.bodyHtml]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !hasEmailHtml) return;
+    const onMessage = (event: MessageEvent): void => {
+      if (event.source !== iframeRef.current?.contentWindow || event.data?.type !== 'atmail:email-link' || typeof event.data?.url !== 'string') return;
+      void openMessageLink(event.data.url).catch((error) => console.error('Não foi possível abrir o link.', error));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [hasEmailHtml]);
   useEffect(() => {
     if (Platform.OS === 'web' || !hasEmailHtml) return;
     let active = true;
@@ -865,11 +889,12 @@ function MessageBody({
   } catch {}
   const nativePreferenceReady = Platform.OS === 'web' || nativePreference?.sender === sender;
   const imagesAllowed = Platform.OS === 'web' ? imagePreferences[sender] ?? !blockedByDefault : nativePreferenceReady && !nativePreference?.blocked;
-  if (message.channel === 'email' && message.bodyHtml) {
-    const html = emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary, imagesAllowed);
+  if (message.channel === 'email' && preparedHtml !== undefined) {
+    const html = emailDocument(preparedHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary, imagesAllowed, Platform.OS === 'web');
     const content = Platform.OS === 'web' ? createElement('iframe', {
+      ref: iframeRef,
       title: `Corpo do e-mail: ${message.subject}`,
-      sandbox: '',
+      sandbox: 'allow-scripts',
       referrerPolicy: 'no-referrer',
       srcDoc: html,
       style: {
@@ -934,7 +959,7 @@ function MessageBody({
             key={`${cleanUrl}-${index}`}
             accessibilityRole="link"
             accessibilityLabel={`Abrir ${cleanUrl}`}
-            onPress={() => void Linking.openURL(cleanUrl.startsWith('www.') ? `https://${cleanUrl}` : cleanUrl)}
+            onPress={() => void openMessageLink(cleanUrl).catch((error) => console.error('Não foi possível abrir o link.', error))}
             style={{ color: theme.colors.accent, textDecorationLine: 'underline' }}
           >
             {part}
@@ -945,16 +970,16 @@ function MessageBody({
   );
 }
 
-function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string, imagesAllowed = false): string {
+function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string, text: string, imagesAllowed = false, linkBridge = false): string {
   const themedBodyHtml = mode === 'dark' ? adaptEmailColors(bodyHtml, surface, text) : bodyHtml;
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
-  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="${emailContentSecurityPolicy(imagesAllowed)}"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="${emailContentSecurityPolicy(imagesAllowed, linkBridge)}"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${linkBridge ? `<script>${EMAIL_LINK_BRIDGE_SCRIPT}</script>` : ''}`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
-  if (headClose.test(themedBodyHtml)) return themedBodyHtml.replace(headClose, (head) => `${headContent}${head}`);
   if (headOpen.test(themedBodyHtml)) return themedBodyHtml.replace(headOpen, (head) => `${head}${headContent}`);
+  if (headClose.test(themedBodyHtml)) return themedBodyHtml.replace(headClose, (head) => `${headContent}${head}`);
   const htmlOpen = /<html\b[^>]*>/i;
   if (htmlOpen.test(themedBodyHtml)) return themedBodyHtml.replace(htmlOpen, (html) => `${html}<head>${headContent}</head>`);
   return `<!doctype html><html><head>${headContent}</head><body>${themedBodyHtml}</body></html>`;
