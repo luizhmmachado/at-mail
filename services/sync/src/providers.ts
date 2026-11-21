@@ -80,7 +80,7 @@ export async function sendGmail(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { to: string[]; subject?: string; body: string; inReplyTo?: string; providerThreadId?: string; attachments?: GmailAttachmentPayload[] }
+  input: { to: string[]; subject?: string; body: string; bodyHtml?: string; inReplyTo?: string; providerThreadId?: string; attachments?: GmailAttachmentPayload[] }
 ): Promise<{ messageId: string; threadId: string; receivedAt: number; rfcMessageId: string }> {
   const token = await accessToken(db, config, userId, accountId);
   const rfcMessageId = `<${randomUUID()}@atmail.local>`;
@@ -99,6 +99,7 @@ export function createGmailRawMessage(input: {
   to: string[];
   subject?: string;
   body: string;
+  bodyHtml?: string;
   inReplyTo?: string;
   rfcMessageId?: string;
   attachments?: GmailAttachmentPayload[];
@@ -121,20 +122,29 @@ export function createGmailRawMessage(input: {
   if (input.rfcMessageId) headers.push(`Message-ID: ${safeHeaderValue(input.rfcMessageId.trim(), 'Message-ID')}`);
 
   const attachments = input.attachments ?? [];
-  if (attachments.length === 0) {
+  if (attachments.length === 0 && input.bodyHtml === undefined) {
     headers.push('Content-Type: text/plain; charset="UTF-8"');
     return Buffer.from(`${headers.join('\r\n')}\r\n\r\n${input.body}`, 'utf8').toString('base64url');
   }
 
   const boundary = `=_atmail_${randomUUID().replace(/-/g, '')}`;
-  headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-  const parts = [
-    `--${boundary}`,
+  const alternativeBoundary = input.bodyHtml === undefined ? undefined : `=_atmail_${randomUUID().replace(/-/g, '')}`;
+  headers.push(`Content-Type: multipart/${attachments.length > 0 ? 'mixed' : 'alternative'}; boundary="${attachments.length > 0 ? boundary : alternativeBoundary}"`);
+  const parts: string[] = [];
+  if (attachments.length > 0) parts.push(`--${boundary}`);
+  if (alternativeBoundary !== undefined) {
+    if (attachments.length > 0) parts.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`, '');
+    parts.push(`--${alternativeBoundary}`);
+  }
+  parts.push(
     'Content-Type: text/plain; charset="UTF-8"',
     'Content-Transfer-Encoding: base64',
     '',
     wrapBase64(Buffer.from(input.body, 'utf8').toString('base64'))
-  ];
+  );
+  if (alternativeBoundary !== undefined && input.bodyHtml !== undefined) {
+    parts.push(`--${alternativeBoundary}`, 'Content-Type: text/html; charset="UTF-8"', 'Content-Transfer-Encoding: base64', '', wrapBase64(Buffer.from(input.bodyHtml, 'utf8').toString('base64')), `--${alternativeBoundary}--`);
+  }
 
   for (const attachment of attachments) {
     if (/[\r\n]/.test(attachment.fileName)) throw new Error('nome de anexo inválido');
@@ -151,7 +161,8 @@ export function createGmailRawMessage(input: {
       wrapBase64(attachment.base64)
     );
   }
-  parts.push(`--${boundary}--`, '');
+  if (attachments.length > 0) parts.push(`--${boundary}--`);
+  parts.push('');
   return Buffer.from(`${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`, 'utf8').toString('base64url');
 }
 

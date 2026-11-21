@@ -1,5 +1,6 @@
-import { createElement, useMemo, useRef, useState, type ComponentRef, type ReactElement } from 'react';
+import { createElement, useEffect, useMemo, useRef, useState, type ComponentRef, type ReactElement } from 'react';
 import { Image, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import {
   formatRelativeTime,
   groupChatMessageThreads,
@@ -23,12 +24,15 @@ import {
 import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
 import { Glyph, type GlyphName } from './LucideGlyph';
-import { selectMessageAttachments, type NewMessageAttachment } from './NewMessageComposer';
+import { selectMessageAttachments, useImagePaste, type NewMessageAttachment } from './NewMessageComposer';
+import { isTextFormatted, toggleTextFormat } from './text-format';
+import { NativeEmailHtml } from './NativeEmailHtml';
+import { emailContentSecurityPolicy, emailImagePreferenceKey } from './email-html-policy';
 
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
-  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[]) => Promise<void>;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[], formatted?: boolean) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
 }
 
@@ -48,11 +52,15 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const { feed } = useFeed();
   const readerScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const replyScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const replyInput = useRef<ComponentRef<typeof TextInput> | null>(null);
   const [selectedChatThread, setSelectedChatThread] = useState<{ conversationId: string; id: string }>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [formattedDrafts, setFormattedDrafts] = useState<Record<string, boolean>>({});
   const [attachmentsByDraft, setAttachmentsByDraft] = useState<Record<string, NewMessageAttachment[]>>({});
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
+  const [formattingOpen, setFormattingOpen] = useState(false);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const mobile = onBack !== undefined;
   const gutter = mobile ? theme.layout.mobilePaddingX : theme.layout.readerGutter;
   const chatThreads = useMemo(() => groupChatMessageThreads(messages), [messages]);
@@ -62,6 +70,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const draftKey = JSON.stringify([thread?.id, activeChatThread?.id ?? 'main']);
   const draft = drafts[draftKey] ?? '';
   const attachments = attachmentsByDraft[draftKey] ?? [];
+  useImagePaste(replyInput, attachments, thread !== undefined && !sending, (next) => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: next })), setNotice);
   const setDraft = (value: string): void => {
     setDrafts((current) => ({ ...current, [draftKey]: value }));
   };
@@ -118,13 +127,21 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const platform = currentPlatform();
   const canModifyEmail = thread.channel !== 'chat';
   const isChatThread = thread.channel === 'chat';
+  const applyFormatting = (marker: string): void => {
+    const result = toggleTextFormat(draft, selection, marker, !isChatThread && marker === '_' ? '*' : undefined);
+    setDraft(result.text);
+    setFormattedDrafts((current) => ({ ...current, [draftKey]: true }));
+    setSelection(result.selection);
+    replyInput.current?.focus();
+  };
   const send = async (): Promise<void> => {
     if (!onSend || (draft.trim().length === 0 && attachments.length === 0) || sending) return;
     setSending(true);
     setNotice(undefined);
     try {
-      await onSend(thread, draft.trim(), activeChatThread?.threadName, attachments);
+      await onSend(thread, draft.trim(), activeChatThread?.threadName, attachments, formattedDrafts[draftKey] === true);
       setDraft('');
+      setFormattedDrafts((current) => ({ ...current, [draftKey]: false }));
       setAttachmentsByDraft((current) => ({ ...current, [draftKey]: [] }));
       actions.toggleCompose(false);
       setNotice('Mensagem enviada.');
@@ -313,10 +330,13 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
           </View>
 
           <TextInput
+            ref={replyInput}
             accessibilityLabel={isChatThread ? activeChatThread ? 'Escrever resposta na thread' : 'Escrever mensagem' : 'Escrever resposta'}
             multiline
             autoFocus={snapshot.ui.composeOpen}
             value={draft}
+            selection={selection}
+            onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
             onChangeText={(value) => {
               setDraft(value);
               if (notice !== undefined) setNotice(undefined);
@@ -333,18 +353,12 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
           />
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[2] }}>
-            {isChatThread && <Pressable accessibilityRole="button" accessibilityLabel="Anexar arquivos" disabled={sending} onPress={() => {
+            <Pressable accessibilityRole="button" accessibilityLabel="Anexar arquivos" disabled={sending} onPress={() => {
               void selectMessageAttachments(attachments).then((next) => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: next }))).catch((error) => setNotice(error instanceof Error ? error.message : 'Não foi possível anexar o arquivo.'));
-            }}><Glyph name="attach" size={17} color={theme.colors.textSecondary} /></Pressable>}
-            <Text
-              style={{
-                ...typeStyle(theme, 'composeBody'),
-                color: theme.colors.textSecondary,
-                marginLeft: theme.space[3]
-              }}
-            >
-              A
-            </Text>
+            }}><Glyph name="attach" size={17} color={theme.colors.textSecondary} /></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Formatar texto" accessibilityState={{ expanded: formattingOpen }} onPress={() => setFormattingOpen((open) => !open)} style={{ marginLeft: theme.space[3], padding: 4 }}>
+              <Glyph name="format" size={17} color={theme.colors.textSecondary} />
+            </Pressable>
             <View style={{ flex: 1 }} />
             {!mobile && <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>
               {platform === 'macos' || platform === 'ios' ? '⌘' : 'Ctrl'} Enter para enviar
@@ -371,6 +385,16 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
               <Glyph name="arrow" size={14} color={theme.colors.surface} />
             </Pressable>
           </View>
+          {formattingOpen && <View style={{ flexDirection: 'row', gap: theme.space[2], marginTop: theme.space[2] }}>
+            {([
+              ['bold', 'Negrito', isChatThread ? '*' : '**'],
+              ['italic', 'Itálico', '_'],
+              ['strikethrough', 'Tachado', isChatThread ? '~' : '~~']
+            ] as const).map(([name, label, marker]) => {
+              const active = isTextFormatted(draft, selection, marker, !isChatThread && marker === '_' ? '*' : undefined);
+              return <Pressable key={name} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})} disabled={sending} onPress={() => applyFormatting(marker)} style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? theme.colors.accentMuted : 'transparent', borderRadius: theme.radius.sm }}><Glyph name={name} size={16} color={active ? theme.colors.accent : theme.colors.textPrimary} /></Pressable>;
+            })}
+          </View>}
           {attachments.map((attachment, index) => <Pressable key={`${attachment.fileName}-${index}`} accessibilityRole="button" accessibilityLabel={`Remover ${attachment.fileName}`} onPress={() => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: attachments.filter((_, itemIndex) => itemIndex !== index) }))}><Text numberOfLines={1} style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>{attachment.fileName} · Remover</Text></Pressable>)}
         </View>
 
@@ -816,19 +840,38 @@ function MessageBody({
 }): ReactElement {
   const theme = useTheme();
   const [imagePreferences, setImagePreferences] = useState<Record<string, boolean>>({});
+  const [nativePreference, setNativePreference] = useState<{ sender: string; blocked: boolean }>();
   const sender = message.participants[0]?.email.trim().toLowerCase() ?? '';
   const preferenceKey = `atmail.images.blocked:${sender}`;
+  const nativePreferenceKey = emailImagePreferenceKey(sender);
+  const hasEmailHtml = message.channel === 'email' && Boolean(message.bodyHtml);
+  useEffect(() => {
+    if (Platform.OS === 'web' || !hasEmailHtml) return;
+    let active = true;
+    if (!sender) {
+      setNativePreference({ sender, blocked: false });
+      return;
+    }
+    void SecureStore.getItemAsync(nativePreferenceKey).then((value) => {
+      if (active) setNativePreference({ sender, blocked: value === 'true' });
+    }).catch(() => {
+      if (active) setNativePreference({ sender, blocked: false });
+    });
+    return () => { active = false; };
+  }, [sender, nativePreferenceKey, hasEmailHtml]);
   let blockedByDefault = false;
   try {
-    blockedByDefault = sender.length > 0 && globalThis.localStorage?.getItem(preferenceKey) === 'true';
+    blockedByDefault = Platform.OS === 'web' && sender.length > 0 && globalThis.localStorage?.getItem(preferenceKey) === 'true';
   } catch {}
-  const imagesAllowed = imagePreferences[sender] ?? !blockedByDefault;
-  if (Platform.OS === 'web' && message.channel === 'email' && message.bodyHtml) {
-    const iframe = createElement('iframe', {
+  const nativePreferenceReady = Platform.OS === 'web' || nativePreference?.sender === sender;
+  const imagesAllowed = Platform.OS === 'web' ? imagePreferences[sender] ?? !blockedByDefault : nativePreferenceReady && !nativePreference?.blocked;
+  if (message.channel === 'email' && message.bodyHtml) {
+    const html = emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary, imagesAllowed);
+    const content = Platform.OS === 'web' ? createElement('iframe', {
       title: `Corpo do e-mail: ${message.subject}`,
       sandbox: '',
       referrerPolicy: 'no-referrer',
-      srcDoc: emailDocument(message.bodyHtml, theme.mode, theme.colors.surface, theme.colors.textPrimary, imagesAllowed),
+      srcDoc: html,
       style: {
         display: 'block',
         width: '100%',
@@ -836,17 +879,23 @@ function MessageBody({
         border: 0,
         backgroundColor: theme.colors.surface
       }
-    });
+    }) : nativePreferenceReady ? <NativeEmailHtml html={html} height={role === 'readerBody' ? 560 : 260} backgroundColor={theme.colors.surface} /> : null;
     return (
       <View style={{ width: '100%', marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0 }}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={imagesAllowed ? 'Não carregar imagens deste remetente' : 'Carregar imagens deste remetente'}
+          disabled={!nativePreferenceReady}
           onPress={() => {
-            setImagePreferences((current) => ({ ...current, [sender]: !imagesAllowed }));
-            try {
-              if (sender.length > 0) globalThis.localStorage?.setItem(preferenceKey, String(imagesAllowed));
-            } catch {}
+            if (Platform.OS === 'web') {
+              setImagePreferences((current) => ({ ...current, [sender]: !imagesAllowed }));
+              try {
+                if (sender.length > 0) globalThis.localStorage?.setItem(preferenceKey, String(imagesAllowed));
+              } catch {}
+            } else {
+              setNativePreference({ sender, blocked: imagesAllowed });
+              if (sender) void SecureStore.setItemAsync(nativePreferenceKey, String(imagesAllowed)).catch(() => {});
+            }
           }}
           style={{
             alignSelf: 'flex-start',
@@ -861,7 +910,7 @@ function MessageBody({
         >
           <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>{imagesAllowed ? 'Não carregar imagens deste remetente' : 'Carregar imagens deste remetente'}</Text>
         </Pressable>
-        {iframe}
+        {content}
       </View>
     );
   }
@@ -901,9 +950,7 @@ function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
-  // Sem permissão explícita apenas imagens embutidas (data:) são renderizadas.
-  const imageSources = imagesAllowed ? 'https: data:' : 'data:';
-  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${imageSources}; style-src 'unsafe-inline' https:; font-src https: data:; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="${emailContentSecurityPolicy(imagesAllowed)}"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
   if (headClose.test(themedBodyHtml)) return themedBodyHtml.replace(headClose, (head) => `${headContent}${head}`);

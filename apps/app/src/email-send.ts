@@ -1,4 +1,5 @@
 import { brand } from '@mail/core';
+import MarkdownIt from 'markdown-it';
 import type { Account, EmailMessage, SendRequest } from '@mail/core';
 import type { EmailAttachmentPayload } from './adapters/sync-client';
 
@@ -10,6 +11,10 @@ export interface EmailSendReceipt {
 }
 
 export type EmailSendRequest = SendRequest & { attachments?: EmailAttachmentPayload[] };
+
+export function formattedEmailBody(body: string): string {
+  return new MarkdownIt({ html: false, breaks: true }).render(body);
+}
 
 export function parseEmailSendReceipt(value: unknown): EmailSendReceipt | undefined {
   if (typeof value !== 'object' || value === null) throw new Error('Resposta de envio do Gmail inválida.');
@@ -37,6 +42,7 @@ export function createLocalEmailMessage(account: Account, input: EmailSendReques
     ],
     snippet: input.body,
     bodyText: input.body,
+    bodyHtml: input.bodyHtml,
     receivedAt: receipt.receivedAt,
     isRead: true,
     isStarred: false,

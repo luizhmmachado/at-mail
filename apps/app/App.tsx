@@ -20,7 +20,7 @@ import { addChatReaction, removeAccount, sendChatMessage, sendChatReply, sendEma
 import { LandingScreen } from './src/LandingScreen';
 import { brand, isChatMessage } from '@mail/core';
 import type { Account, AccountId, ChatMessage, ContextId, MessageId, UnifiedThread } from '@mail/core';
-import { createLocalEmailMessage } from './src/email-send';
+import { createLocalEmailMessage, formattedEmailBody } from './src/email-send';
 import type { EmailSendRequest } from './src/email-send';
 
 const EMAIL_SYNC_INTERVAL_MS = 5 * 1000;
@@ -115,7 +115,7 @@ export default function App() {
     void syncEngine.syncChannel('email');
   }
 
-  async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string, attachments: NewMessageAttachment[] = []): Promise<void> {
+  async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string, attachments: NewMessageAttachment[] = [], formatted = false): Promise<void> {
     const messages = store.getThreadMessages(thread.id);
     const last = messages[messages.length - 1];
     if (!last) throw new Error('Não encontrei uma mensagem para responder.');
@@ -148,6 +148,8 @@ export default function App() {
       to: [recipient],
       subject: thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`,
       body,
+      ...(formatted ? { bodyHtml: formattedEmailBody(body) } : {}),
+      attachments,
       inReplyTo: last.rfcMessageId,
       providerThreadId: last.providerThreadId.startsWith('optimistic:') ? undefined : last.providerThreadId
     });

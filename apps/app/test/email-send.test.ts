@@ -1,9 +1,96 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createAppStore, createSeedData } from '@mail/core';
-import { createLocalEmailMessage, parseEmailSendReceipt } from '../src/email-send';
+import { createLocalEmailMessage, formattedEmailBody, parseEmailSendReceipt } from '../src/email-send';
+import { appendClipboardImages } from '../../../packages/ui/src/components/clipboard-attachments';
+import { isTextFormatted, toggleTextFormat } from '../../../packages/ui/src/components/text-format';
+import { emailContentSecurityPolicy, emailImagePreferenceKey, isNativeEmailNavigationAllowed } from '../../../packages/ui/src/components/email-html-policy';
+
+describe('imagens de e-mail no mobile', () => {
+  it('permite imagens HTTPS por padrão e bloqueia imagens remotas quando solicitado', () => {
+    assert.match(emailContentSecurityPolicy(true), /img-src https: data:/);
+    assert.match(emailContentSecurityPolicy(false), /img-src data:/);
+    assert.doesNotMatch(emailContentSecurityPolicy(false), /img-src https:/);
+    assert.match(emailContentSecurityPolicy(true), /default-src 'none'/);
+  });
+
+  it('mantém preferências por remetente e bloqueia navegação externa', () => {
+    assert.equal(emailImagePreferenceKey(' Pessoa@Example.com '), emailImagePreferenceKey('pessoa@example.com'));
+    assert.notEqual(emailImagePreferenceKey('pessoa@example.com'), emailImagePreferenceKey('outra@example.com'));
+    assert.match(emailImagePreferenceKey('pessoa@example.com'), /^[A-Za-z0-9._-]+$/);
+    assert.equal(isNativeEmailNavigationAllowed('https://email.atmail.invalid/'), true);
+    assert.equal(isNativeEmailNavigationAllowed('about:blank'), true);
+    assert.equal(isNativeEmailNavigationAllowed('https://example.com/'), false);
+    assert.equal(isNativeEmailNavigationAllowed('file:///etc/passwd'), false);
+  });
+});
+
+describe('alternância da formatação', () => {
+  for (const marker of ['**', '*', '_', '~~', '~']) {
+    it(`aplica e remove ${marker} em uma seleção ou cursor vazio`, () => {
+      const applied = toggleTextFormat('texto', { start: 0, end: 5 }, marker);
+      assert.equal(applied.text, `${marker}texto${marker}`);
+      assert.equal(isTextFormatted(applied.text, applied.selection, marker), true);
+      assert.deepEqual(toggleTextFormat(applied.text, applied.selection, marker), { text: 'texto', selection: { start: 0, end: 5 } });
+      const empty = toggleTextFormat('', { start: 0, end: 0 }, marker);
+      assert.equal(isTextFormatted(empty.text, empty.selection, marker), true);
+      assert.deepEqual(toggleTextFormat(empty.text, empty.selection, marker), { text: '', selection: { start: 0, end: 0 } });
+    });
+  }
+
+  it('remove apenas o trecho selecionado e mantém os demais formatados', () => {
+    const result = toggleTextFormat('**olá mundo**', { start: 6, end: 11 }, '**');
+    assert.deepEqual(result, { text: '**olá** mundo', selection: { start: 8, end: 13 } });
+    assert.match(formattedEmailBody(result.text), /<strong>olá<\/strong> mundo/);
+  });
+
+  it('desativa a formatação no cursor ao final do trecho', () => {
+    const result = toggleTextFormat('**texto**', { start: 7, end: 7 }, '**');
+    assert.deepEqual(result, { text: '**texto**', selection: { start: 9, end: 9 } });
+    assert.equal(isTextFormatted(result.text, result.selection, '**'), false);
+  });
+
+  it('mantém o itálico nas duas partes quando o cursor é desativado no meio', () => {
+    const result = toggleTextFormat('_abcDEF_', { start: 4, end: 4 }, '_', '*');
+    const inserted = `${result.text.slice(0, result.selection.start)}X${result.text.slice(result.selection.start)}`;
+    assert.equal(inserted, '*abc*X*DEF*');
+    assert.match(formattedEmailBody(inserted), /<em>abc<\/em>X<em>DEF<\/em>/);
+    assert.equal(isTextFormatted(inserted, { start: 1, end: 4 }, '_', '*'), true);
+    const removed = toggleTextFormat(inserted, { start: 1, end: 4 }, '_', '*');
+    assert.equal(removed.text, 'abcX*DEF*');
+    assert.match(formattedEmailBody(removed.text), /abcX<em>DEF<\/em>/);
+  });
+});
+
+describe('imagens coladas como anexos', () => {
+  it('adiciona imagens em base64 e ignora arquivos que não são imagens', async () => {
+    const previous = [{ fileName: 'arquivo.txt', mimeType: 'text/plain', sizeInBytes: 3, base64: 'YWJj' }];
+    const image = new File([new Uint8Array([0, 1, 255])], 'imagem.png', { type: 'image/png' });
+    const text = new File(['texto'], 'outro.txt', { type: 'text/plain' });
+    assert.deepEqual(await appendClipboardImages(previous, [image, text]), [previous[0], {
+      fileName: 'imagem.png', mimeType: 'image/png', sizeInBytes: 3, base64: 'AAH/'
+    }]);
+  });
+
+  it('rejeita imagens que excedem os limites sem alterar os anexos existentes', async () => {
+    const image = new File(['a'], '', { type: 'image/png' });
+    assert.equal((await appendClipboardImages([], [image]))[0]?.fileName, 'imagem-colada.png');
+    const existing = Array.from({ length: 10 }, (_, index) => ({ fileName: String(index), mimeType: 'text/plain', sizeInBytes: 1, base64: 'YQ==' }));
+    await assert.rejects(appendClipboardImages(existing, [image]), /máximo 10 arquivos/);
+    await assert.rejects(appendClipboardImages([], [new File([new Uint8Array(3 * 1024 * 1024 + 1)], 'grande.png', { type: 'image/png' })]), /3 MB/);
+    assert.equal(existing.length, 10);
+  });
+});
 
 describe('envio imediato de e-mail', () => {
+  it('converte formatação sem interpretar HTML inserido no texto', () => {
+    const html = formattedEmailBody('**negrito** _itálico_ ~~riscado~~\n<script>alert(1)</script>');
+    assert.match(html, /<strong>negrito<\/strong>/);
+    assert.match(html, /<em>itálico<\/em>/);
+    assert.match(html, /<s>riscado<\/s>/);
+    assert.match(html, /&lt;script&gt;/);
+    assert.doesNotMatch(html, /<script>/);
+  });
   it('usa o mesmo identificador da sincronização para não duplicar o envio confirmado', () => {
     const seed = createSeedData();
     const account = seed.accounts.find((item) => item.channel === 'email')!;
