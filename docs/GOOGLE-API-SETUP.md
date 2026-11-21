@@ -30,7 +30,8 @@ O domínio usado no branding também precisa ser verificado no Google Search Con
 ### Escopos sensíveis/restritos
 
 O app pede `gmail.modify` e `chat.messages.readonly` (restritos), além de
-`chat.messages.create`, `chat.spaces.create` e `chat.spaces.readonly` (sensíveis).
+`chat.messages.create`, `chat.messages.reactions`, `chat.users.readstate`,
+`chat.spaces.create` e `chat.spaces.readonly`.
 `gmail.modify` já permite ler, editar e enviar e-mails, então não é necessário pedir
 `gmail.send` também. Em produção:
 
@@ -56,7 +57,7 @@ e a WebView do desktop/APK não recebe deep links por padrão. O fluxo agora é:
 2. o app abre o Google com `redirect_uri = <SYNC_API_URL>/auth/google/callback` e esse `state`;
 3. o backend só aceita o callback de um `state` que ele mesmo registrou — qualquer outro
    recebe 400, então a rota pública não grava nada arbitrário — e mostra "Login concluído";
-4. o app consulta `GET /auth/google/code?state=…` até receber o `code` e então troca por uma
+4. o app consulta `POST /auth/google/code` com o `state` até receber o `code` e então troca por uma
    sessão em `POST /auth/google/exchange` (PKCE, `code_verifier` no app).
 
 Cadastre em **Credenciais → OAuth 2.0 Client IDs → (client Web) → URIs de redirecionamento
@@ -88,11 +89,11 @@ A tabela `atmail_oauth_pending` é criada automaticamente por `openDb`; não há
 ## 4. Escopos e recursos
 
 O app solicita `gmail.modify` para exibir, organizar e enviar mensagens; `chat.messages.readonly`
-e `chat.spaces.readonly` para ler o Google Chat; e `chat.messages.create` e
-`chat.spaces.create` para criar/obter conversas diretas e enviar mensagens de texto. Os escopos
-de leitura do Gmail e das mensagens do Chat são restritos; os demais escopos do Chat são
-sensíveis. O composer permite escolher destinatários e, no caso de e-mail, anexar até 10
-arquivos (3 MB no total).
+e `chat.spaces.readonly` para ler o Google Chat; `chat.messages.create` e `chat.spaces.create`
+para criar conversas e enviar mensagens; `chat.messages.reactions` para adicionar e remover
+reações; e `chat.users.readstate` para sincronizar a leitura. Contas já conectadas precisam
+ser adicionadas novamente para conceder novos escopos. O compositor de e-mail e Chat aceita
+até 10 arquivos, com 3 MB no total.
 
 ## 5. Origens que o cliente usa
 

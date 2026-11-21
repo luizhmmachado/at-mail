@@ -168,7 +168,7 @@ export async function sendChat(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { recipient: string; body: string }
+  input: { recipient: string; body: string; attachments?: GmailAttachmentPayload[] }
 ): Promise<ChatSendReceipt> {
   const token = await accessToken(db, config, userId, accountId);
   let space: any;
@@ -191,9 +191,10 @@ export async function sendChat(
   }
   const spaceName = typeof space.name === 'string' ? space.name : '';
   if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName)) throw new Error('O Google Chat não retornou um espaço de conversa válido.');
+  const attachments = await uploadChatAttachments(token, spaceName, input.attachments ?? []);
   const message = await googleJsonRequest(`https://chat.googleapis.com/v1/${spaceName}/messages?requestId=${randomUUID()}`, token, {
     method: 'POST',
-    body: JSON.stringify({ text: input.body })
+    body: JSON.stringify({ text: input.body, ...(attachments.length ? { attachment: attachments } : {}) })
   });
   return chatSendReceipt(spaceName, message);
 }
@@ -241,21 +242,66 @@ export async function sendChatToSpace(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { spaceName: string; threadName?: string; body: string }
+  input: { spaceName: string; threadName?: string; body: string; attachments?: GmailAttachmentPayload[] }
 ): Promise<ChatSendReceipt> {
   const token = await accessToken(db, config, userId, accountId);
   const url = new URL(`https://chat.googleapis.com/v1/${input.spaceName}/messages`);
   url.searchParams.set('requestId', randomUUID());
   if (input.threadName) url.searchParams.set('messageReplyOption', 'REPLY_MESSAGE_OR_FAIL');
+  const attachments = await uploadChatAttachments(token, input.spaceName, input.attachments ?? []);
   const message = await googleJsonRequest(url.toString(), token, {
     method: 'POST',
-    body: JSON.stringify(chatReplyRequest(input.body, input.threadName))
+    body: JSON.stringify({ ...chatReplyRequest(input.body, input.threadName), ...(attachments.length ? { attachment: attachments } : {}) })
   });
   return chatSendReceipt(input.spaceName, message);
 }
 
+async function uploadChatAttachments(token: string, spaceName: string, attachments: GmailAttachmentPayload[]): Promise<unknown[]> {
+  const uploaded: unknown[] = [];
+  for (const attachment of attachments) {
+    const boundary = `atmail-${randomUUID()}`;
+    const payload = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ filename: attachment.fileName })}\r\n--${boundary}\r\nContent-Type: ${attachment.mimeType}\r\n\r\n`),
+      Buffer.from(attachment.base64, 'base64'),
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ]);
+    const result = await googleJsonRequest(`https://chat.googleapis.com/upload/v1/${spaceName}/attachments:upload?uploadType=multipart`, token, {
+      method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: payload
+    });
+    if (!result.attachmentDataRef?.attachmentUploadToken) throw new Error('O Google Chat não retornou o anexo enviado.');
+    uploaded.push({ attachmentDataRef: result.attachmentDataRef });
+  }
+  return uploaded;
+}
+
 export function chatReactionRequest(emoji: string): { emoji: { unicode: string } } {
   return { emoji: { unicode: emoji } };
+}
+
+const ownReactionCache = new Map<string, { expiresAt: number; reactions: { name: string; emoji: string }[] }>();
+
+async function ownChatReactions(token: string, accountId: string, messageName: string): Promise<{ name: string; emoji: string }[]> {
+  const accountMatch = /^google:([A-Za-z0-9_-]+):chat$/.exec(accountId);
+  if (!accountMatch) return [];
+  const key = `${accountId}:${messageName}`;
+  const cached = ownReactionCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.reactions;
+  const reactions: { name: string; emoji: string }[] = [];
+  let pageToken = '';
+  do {
+    const url = new URL(`https://chat.googleapis.com/v1/${messageName}/reactions`);
+    url.searchParams.set('filter', `user.name = "users/${accountMatch[1]}"`);
+    url.searchParams.set('pageSize', '200');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const page = await googleJson(url.toString(), token);
+    for (const reaction of page.reactions ?? []) {
+      if (typeof reaction.name === 'string' && typeof reaction.emoji?.unicode === 'string') reactions.push({ name: reaction.name, emoji: reaction.emoji.unicode });
+    }
+    pageToken = typeof page.nextPageToken === 'string' ? page.nextPageToken : '';
+  } while (pageToken);
+  if (ownReactionCache.size >= 1000) ownReactionCache.clear();
+  ownReactionCache.set(key, { expiresAt: Date.now() + 30000, reactions });
+  return reactions;
 }
 
 export async function createChatReaction(
@@ -263,13 +309,23 @@ export async function createChatReaction(
   config: SyncConfig,
   userId: string,
   accountId: string,
-  input: { messageName: string; emoji: string }
+  input: { messageName: string; emoji: string; remove?: boolean }
 ): Promise<void> {
   const token = await accessToken(db, config, userId, accountId);
-  await googleJsonRequest(`https://chat.googleapis.com/v1/${input.messageName}/reactions`, token, {
-    method: 'POST',
-    body: JSON.stringify(chatReactionRequest(input.emoji))
-  });
+  if (input.remove) {
+    ownReactionCache.delete(`${accountId}:${input.messageName}`);
+    const reactions = await ownChatReactions(token, accountId, input.messageName);
+    const reaction = reactions.find((item) => item.emoji === input.emoji);
+    if (reaction && reaction.name.startsWith(`${input.messageName}/reactions/`) && /^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+\/reactions\/[A-Za-z0-9._-]+$/.test(reaction.name)) {
+      await googleJsonRequest(`https://chat.googleapis.com/v1/${reaction.name}`, token, { method: 'DELETE' });
+    }
+  } else {
+    await googleJsonRequest(`https://chat.googleapis.com/v1/${input.messageName}/reactions`, token, {
+      method: 'POST',
+      body: JSON.stringify(chatReactionRequest(input.emoji))
+    });
+  }
+  ownReactionCache.delete(`${accountId}:${input.messageName}`);
 }
 
 export function chatSpaceReadStateUrl(spaceName: string): string {
@@ -510,7 +566,7 @@ export function chatMessagesUrl(spaceName: string): string {
   const url = new URL(`https://chat.googleapis.com/v1/${spaceName}/messages`);
   url.searchParams.set('pageSize', '100');
   url.searchParams.set('orderBy', 'createTime desc');
-  url.searchParams.set('fields', 'messages(name,text,createTime,threadReply,sender(name,displayName,email,avatarUrl),thread(name),emojiReactionSummaries(emoji(unicode),reactionCount)),nextPageToken');
+  url.searchParams.set('fields', 'messages(name,text,createTime,threadReply,sender(name,displayName,email,avatarUrl),thread(name),attachment(name,contentName,contentType,thumbnailUri,downloadUri),emojiReactionSummaries(emoji(unicode),reactionCount)),nextPageToken');
   return url.toString();
 }
 
@@ -548,7 +604,16 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
         if (status === 403) readStateAvailable = false;
         else if (status !== 404) throw error;
       }
-      pages[index] = { messagePage, lastReadTime, readStateAvailable };
+      const items = (messagePage.messages ?? []).filter((item: any) => item.emojiReactionSummaries?.length > 0 && typeof item.name === 'string');
+      const ownReactions = new Map<string, { name: string; emoji: string }[]>();
+      let reactionIndex = 0;
+      await Promise.all(Array.from({ length: Math.min(5, items.length) }, async () => {
+        while (reactionIndex < items.length) {
+          const item = items[reactionIndex++];
+          ownReactions.set(item.name, await ownChatReactions(token, accountId, item.name));
+        }
+      }));
+      pages[index] = { messagePage, lastReadTime, readStateAvailable, ownReactions };
     }
   };
   await Promise.all(Array.from({ length: Math.min(5, spaceList.length) }, fetchWorker));
@@ -570,13 +635,19 @@ export async function fetchChat(db: Db, config: SyncConfig, userId: string, acco
       const reactions = (item.emojiReactionSummaries ?? []).flatMap((reaction: any) => {
         const emoji = reaction.emoji?.unicode;
         return typeof emoji === 'string' && emoji.length > 0
-          ? [{ emoji, count: Number(reaction.reactionCount) || 0 }]
+          ? [{ emoji, count: Number(reaction.reactionCount) || 0, own: result.ownReactions.get(item.name)?.some((own: { emoji: string }) => own.emoji === emoji) === true }]
           : [];
       });
       const threadName = typeof item.thread?.name === 'string' ? item.thread.name : undefined;
+      const attachments = (item.attachment ?? []).flatMap((attachment: any) => {
+        if (typeof attachment.name !== 'string') return [];
+        const downloadUrl = typeof attachment.downloadUri === 'string' && attachment.downloadUri.startsWith('https://') ? attachment.downloadUri : undefined;
+        const thumbnailUrl = typeof attachment.thumbnailUri === 'string' && attachment.thumbnailUri.startsWith('https://') ? attachment.thumbnailUri : undefined;
+        return [{ id: attachment.name, fileName: attachment.contentName ?? 'Arquivo', mimeType: attachment.contentType ?? 'application/octet-stream', ...(downloadUrl ? { downloadUrl } : {}), ...(thumbnailUrl ? { thumbnailUrl } : {}) }];
+      });
       const lastReadTime = threadName === undefined ? undefined : threadReadTimes.get(threadName);
       const isRead = item.sender?.name === 'users/me' || isChatMessageRead(receivedAt, result.lastReadTime, result.readStateAvailable, lastReadTime);
-      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName, isThreadReply: item.threadReply === true } : {}), reactions });
+      messages.push({ id: brand.message(`chat:${accountId}:${item.name}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'chat', participants: [participant], snippet: item.text ?? '', bodyText: item.text ?? '', receivedAt, isRead, isStarred: false, isMentioned: (item.text ?? '').includes('@'), labels: [], spaceId: brand.space(space.name), spaceName, senderName: sender, isDirectMessage: space.spaceType === 'DIRECT_MESSAGE', ...(threadName ? { threadName, isThreadReply: item.threadReply === true } : {}), reactions, attachments });
     }
   }
   return { messages, removedIds: [], cursor: spaces.nextPageToken ?? '', hasMore: Boolean(spaces.nextPageToken) };

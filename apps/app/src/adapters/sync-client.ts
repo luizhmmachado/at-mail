@@ -32,14 +32,14 @@ export interface RawMessageDto {
   providerThreadId?: string;
   rfcMessageId?: string;
   folder?: EmailMessage['folder'];
-  attachments?: { id: string; fileName: string; mimeType: string; sizeInBytes: number }[];
+  attachments?: { id: string; fileName: string; mimeType: string; sizeInBytes?: number; thumbnailUrl?: string; downloadUrl?: string }[];
   spaceId?: string;
   spaceName?: string;
   senderName?: string;
   isDirectMessage?: boolean;
   threadName?: string;
   isThreadReply?: boolean;
-  reactions?: { emoji: string; count: number }[];
+  reactions?: { emoji: string; count: number; own?: boolean }[];
 }
 
 export interface SyncRequest {
@@ -103,21 +103,21 @@ export async function sendEmail(accountId: string, request: SendRequest & { atta
   return parseEmailSendReceipt(await response.json());
 }
 
-export async function sendChatMessage(accountId: string, recipient: string, body: string): Promise<ChatSendReceipt | undefined> {
+export async function sendChatMessage(accountId: string, recipient: string, body: string, attachments: EmailAttachmentPayload[] = []): Promise<ChatSendReceipt | undefined> {
   const response = await apiFetch('/messages/send-chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, recipient, body })
+    body: JSON.stringify({ accountId, recipient, body, attachments })
   });
   if (!response.ok) throw new Error(await messageResponseError(response));
   return readChatSendReceipt(response);
 }
 
-export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string): Promise<ChatSendReceipt | undefined> {
+export async function sendChatReply(accountId: string, spaceId: string, threadName: string | undefined, body: string, attachments: EmailAttachmentPayload[] = []): Promise<ChatSendReceipt | undefined> {
   const response = await apiFetch('/messages/send-chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, spaceId, threadName, body })
+    body: JSON.stringify({ accountId, spaceId, threadName, body, attachments })
   });
   if (!response.ok) throw new Error(await messageResponseError(response));
   return readChatSendReceipt(response);
@@ -128,11 +128,11 @@ async function readChatSendReceipt(response: Response): Promise<ChatSendReceipt 
   return parseChatSendReceipt(result);
 }
 
-export async function addChatReaction(accountId: string, messageId: string, emoji: string): Promise<void> {
+export async function addChatReaction(accountId: string, messageId: string, emoji: string, remove = false): Promise<void> {
   const response = await apiFetch('/messages/react-chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, messageId, emoji })
+    body: JSON.stringify({ accountId, messageId, emoji, remove })
   });
   if (!response.ok) throw new Error(await messageResponseError(response));
 }
@@ -229,6 +229,7 @@ export function toMailMessage(dto: RawMessageDto, accountId: string): MailMessag
     if (dto.threadName !== undefined) chat.threadName = dto.threadName;
     if (dto.isThreadReply !== undefined) chat.isThreadReply = dto.isThreadReply;
     if (dto.reactions !== undefined) chat.reactions = dto.reactions;
+    if (dto.attachments !== undefined) chat.attachments = dto.attachments;
     return chat;
   }
 
@@ -240,7 +241,7 @@ export function toMailMessage(dto: RawMessageDto, accountId: string): MailMessag
     rfcMessageId: dto.rfcMessageId,
     references: [],
     folder: dto.folder ?? 'inbox',
-    attachments: dto.attachments ?? []
+    attachments: (dto.attachments ?? []).map((attachment) => ({ ...attachment, sizeInBytes: attachment.sizeInBytes ?? 0 }))
   };
   return email;
 }

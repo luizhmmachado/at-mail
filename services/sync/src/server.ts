@@ -76,6 +76,10 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           // Sem o `state` pré-registrado, a requisição é descartada: esta rota é pública.
           const known = (await db.query<{ state: string }>('UPDATE atmail_oauth_pending SET code = $1, error = $2 WHERE state = $3 AND created_at > $4 RETURNING state', [authorizationCode, authorizationError, state, Date.now() - PENDING_TTL_MS])).rows;
           if (known.length === 0) return html(res, 400, oauthPage('Sessão de login expirada', 'Este login não foi iniciado pelo @mail ou já expirou. Volte ao app e tente novamente.'), pageHeaders);
+          if (state.startsWith('tauri:')) {
+            const title = authorizationCode.length === 0 ? 'Login não concluído' : 'Login concluído';
+            return html(res, 200, oauthPage(title, 'Volte ao aplicativo @mail. Você pode fechar esta aba.', undefined, true), pageHeaders);
+          }
           const returnUrl = oauthReturnUrl(state, config.webAppOrigin);
           if (authorizationCode.length === 0) return html(res, 200, oauthPage('Login não concluído', 'O Google recusou a autorização. Voltando ao @mail…', returnUrl), pageHeaders);
           return html(res, 200, oauthPage('Login concluído', 'Voltando ao @mail…', returnUrl), pageHeaders);
@@ -302,19 +306,35 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account || account.provider !== 'google-chat' || account.channel !== 'chat') return json(res, 404, { error: 'conta Google Chat não encontrada' }, headers);
           const message = String(input.body ?? '').trim();
-          if (message.length === 0) return json(res, 400, { error: 'mensagem é obrigatória' }, headers);
+          const rawAttachments = Array.isArray(input.attachments) ? input.attachments : [];
+          if (rawAttachments.length > MAX_EMAIL_ATTACHMENTS) return json(res, 413, { error: 'máximo de 10 anexos por mensagem' }, headers);
+          const attachments: GmailAttachmentPayload[] = [];
+          let totalAttachmentBytes = 0;
+          for (const rawAttachment of rawAttachments) {
+            if (rawAttachment === null || typeof rawAttachment !== 'object') return json(res, 400, { error: 'anexo inválido' }, headers);
+            const attachment = rawAttachment as Record<string, unknown>;
+            const fileName = typeof attachment.fileName === 'string' ? attachment.fileName.trim() : '';
+            const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
+            const base64 = typeof attachment.base64 === 'string' ? attachment.base64 : '';
+            if (!fileName || /[\r\n]/.test(fileName) || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(mimeType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) return json(res, 400, { error: 'anexo inválido' }, headers);
+            if (base64.length > Math.ceil(MAX_EMAIL_ATTACHMENT_BYTES * 4 / 3) + 4) return json(res, 413, { error: 'tamanho total dos anexos excede 3 MB' }, headers);
+            totalAttachmentBytes += Buffer.from(base64, 'base64').length;
+            if (totalAttachmentBytes > MAX_EMAIL_ATTACHMENT_BYTES) return json(res, 413, { error: 'tamanho total dos anexos excede 3 MB' }, headers);
+            attachments.push({ fileName, mimeType, base64 });
+          }
+          if (message.length === 0 && attachments.length === 0) return json(res, 400, { error: 'mensagem ou anexo é obrigatório' }, headers);
           const spaceName = String(input.spaceId ?? '').trim();
           if (spaceName) {
             const threadName = String(input.threadName ?? '').trim() || undefined;
             if (!/^spaces\/[A-Za-z0-9._-]+$/.test(spaceName) || (threadName !== undefined && !/^spaces\/[A-Za-z0-9._-]+\/threads\/[A-Za-z0-9._-]+$/.test(threadName))) {
               return json(res, 400, { error: 'espaço ou thread inválidos' }, headers);
             }
-            const receipt = await sendChatToSpace(db, config, userId, accountId, { spaceName, threadName, body: message });
+            const receipt = await sendChatToSpace(db, config, userId, accountId, { spaceName, threadName, body: message, attachments });
             return json(res, 200, { sent: true, ...receipt }, headers);
           }
           const recipient = String(input.recipient ?? '').trim();
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return json(res, 400, { error: 'destinatário válido é obrigatório' }, headers);
-          const receipt = await sendChat(db, config, userId, accountId, { recipient, body: message });
+          const receipt = await sendChat(db, config, userId, accountId, { recipient, body: message, attachments });
           return json(res, 200, { sent: true, ...receipt }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/react-chat' || url.pathname === '/api/messages/react-chat')) {
@@ -329,7 +349,7 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           if (!/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+$/.test(messageName) || Array.from(emoji).length === 0 || Array.from(emoji).length > 8) {
             return json(res, 400, { error: 'mensagem ou emoji inválidos' }, headers);
           }
-          await createChatReaction(db, config, userId, accountId, { messageName, emoji });
+          await createChatReaction(db, config, userId, accountId, { messageName, emoji, remove: input.remove === true });
           return json(res, 200, { reacted: true }, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
@@ -487,16 +507,16 @@ function oauthReturnUrl(state: string, webAppOrigin: string): string | undefined
   if (separator < 0) return undefined;
   const platform = state.slice(0, separator);
   if (platform === 'web-legacy') return 'https://at-mail-web.vercel.app/';
-  if (platform === 'web' || platform === 'tauri') return `${webAppOrigin.replace(/\/+$/, '')}/`;
+  if (platform === 'web') return `${webAppOrigin.replace(/\/+$/, '')}/`;
   if (platform === 'android' || platform === 'ios') {
     return `atmail://auth/google/callback?state=${encodeURIComponent(state)}`;
   }
   return undefined;
 }
 
-function oauthPage(title: string, message: string, returnUrl?: string): string {
+function oauthPage(title: string, message: string, returnUrl?: string, closeWindow = false): string {
   const returnLink = returnUrl === undefined ? '' : `<p><a href="${returnUrl}">Continuar no @mail</a></p>`;
-  const returnScript = returnUrl === undefined ? '' : `<script>window.location.replace(${JSON.stringify(returnUrl)});</script>`;
+  const returnScript = closeWindow ? '<script>window.close();</script>' : returnUrl === undefined ? '' : `<script>window.location.replace(${JSON.stringify(returnUrl)});</script>`;
   return `<!doctype html>
 <html lang="pt-BR">
   <head>

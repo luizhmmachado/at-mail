@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Pressable, SectionList, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, SectionList, Text, TextInput, View, type ImageSourcePropType } from 'react-native';
 import {
   contextAccent,
   formatShortcut,
@@ -13,11 +13,11 @@ import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
 import { ChannelTabs } from './ChannelTabs';
-import { MobileContextCluster } from './ContextSwitcher';
 import { Glyph } from './LucideGlyph';
 import { ThreadRow } from './ThreadRow';
 
 export interface UnifiedThreadListProps {
+  appIcon?: ImageSourcePropType;
   feed: FeedResult;
   onSelectThread: (threadId: ThreadId) => void;
   onCompose?: () => void;
@@ -32,7 +32,7 @@ export interface UnifiedThreadListProps {
  * A ordem vertical é fixa: título (20/24) + chevron + escrever, busca de 34 px,
  * segmentado de 32 px e, dentro da lista, cabeçalhos de data com contagem.
  */
-export function UnifiedThreadList({ feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false }: UnifiedThreadListProps): ReactElement {
+export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false }: UnifiedThreadListProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
@@ -61,9 +61,9 @@ export function UnifiedThreadList({ feed, onSelectThread, onCompose, onOpenSetti
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: mobile ? 6 : 8 }}>
-          {mobile && (
+          {mobile && appIcon && (
             <View style={{ marginRight: 4 }}>
-              <MobileContextCluster />
+              <Image source={appIcon} accessibilityLabel="@mail" style={{ width: 26, height: 26, borderRadius: 5 }} />
             </View>
           )}
           <Pressable

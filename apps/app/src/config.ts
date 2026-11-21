@@ -27,7 +27,7 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/chat.messages.create',
   'https://www.googleapis.com/auth/chat.messages.readonly',
-  'https://www.googleapis.com/auth/chat.messages.reactions.create',
+  'https://www.googleapis.com/auth/chat.messages.reactions',
   'https://www.googleapis.com/auth/chat.users.readstate',
   'https://www.googleapis.com/auth/chat.spaces.create',
   'https://www.googleapis.com/auth/chat.spaces.readonly'
