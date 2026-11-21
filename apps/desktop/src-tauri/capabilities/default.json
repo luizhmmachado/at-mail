@@ -6,10 +6,8 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://accounts.google.com/*" }]
-    },
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "notification:default"
   ]
 }

@@ -1,14 +1,20 @@
 import type { ReactElement } from 'react';
+import { Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { NativeEmailHtmlProps } from './NativeEmailHtml';
-import { isNativeEmailNavigationAllowed, NATIVE_EMAIL_BASE_URL } from './email-html-policy';
+import { isNativeEmailNavigationAllowed, NATIVE_EMAIL_BASE_URL, safeMessageLink } from './email-html-policy';
 
 export function NativeEmailHtml({ html, height, backgroundColor }: NativeEmailHtmlProps): ReactElement {
   return <WebView
     accessibilityLabel="Corpo do e-mail"
     source={{ html, baseUrl: NATIVE_EMAIL_BASE_URL }}
     originWhitelist={['*']}
-    onShouldStartLoadWithRequest={(request) => isNativeEmailNavigationAllowed(request.url)}
+    onShouldStartLoadWithRequest={(request) => {
+      if (isNativeEmailNavigationAllowed(request.url)) return true;
+      const url = safeMessageLink(request.url);
+      if (url) void Linking.openURL(url);
+      return false;
+    }}
     javaScriptEnabled={false}
     domStorageEnabled={false}
     allowFileAccess={false}

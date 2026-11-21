@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { createAppStore, createSeedData } from '@mail/core';
 import { createLocalEmailMessage, formattedEmailBody, parseEmailSendReceipt } from '../src/email-send';
 import { appendClipboardImages } from '../../../packages/ui/src/components/clipboard-attachments';
 import { isTextFormatted, toggleTextFormat } from '../../../packages/ui/src/components/text-format';
-import { emailContentSecurityPolicy, emailImagePreferenceKey, isNativeEmailNavigationAllowed } from '../../../packages/ui/src/components/email-html-policy';
+import { emailContentSecurityPolicy, emailImagePreferenceKey, EMAIL_LINK_BRIDGE_HASH, EMAIL_LINK_BRIDGE_SCRIPT, isNativeEmailNavigationAllowed, prepareEmailHtml, safeMessageLink } from '../../../packages/ui/src/components/email-html-policy';
 
 describe('imagens de e-mail no mobile', () => {
   it('permite imagens HTTPS por padrão e bloqueia imagens remotas quando solicitado', () => {
@@ -22,6 +24,36 @@ describe('imagens de e-mail no mobile', () => {
     assert.equal(isNativeEmailNavigationAllowed('about:blank'), true);
     assert.equal(isNativeEmailNavigationAllowed('https://example.com/'), false);
     assert.equal(isNativeEmailNavigationAllowed('file:///etc/passwd'), false);
+  });
+
+  it('aceita apenas links externos permitidos', () => {
+    assert.equal(safeMessageLink('www.example.com/a'), 'https://www.example.com/a');
+    assert.equal(safeMessageLink('//example.com/a'), 'https://example.com/a');
+    assert.equal(safeMessageLink('https://example.com/a'), 'https://example.com/a');
+    assert.equal(safeMessageLink('mailto:pessoa@example.com'), 'mailto:pessoa@example.com');
+    assert.equal(safeMessageLink('javascript:alert(1)'), undefined);
+    assert.equal(safeMessageLink('file:///etc/passwd'), undefined);
+    assert.equal(safeMessageLink('/interno'), undefined);
+  });
+
+  it('prepara links sem scripts nem redirecionamentos automáticos', () => {
+    const html = prepareEmailHtml('<html><head><base href="https://bad.example"><meta HTTP-EQUIV="Refresh" content="0;url=https://bad.example"><script>alert(1)</script></head><body><A HREF="https&#58;//example.com" TARGET="_self">link</A><a href="javascript:alert(1)">ruim</a><a href="file:///etc/passwd">arquivo</a></body></html>');
+    assert.match(html, /href="https:\/\/example\.com\/"/i);
+    assert.match(html, /target="_self"/i);
+    assert.match(html, /rel="noopener noreferrer"/i);
+    assert.doesNotMatch(html, /<script|<base|http-equiv="refresh"|javascript:|file:\/\//i);
+    const webHtml = prepareEmailHtml('<a href="https://example.com" target="_self">link</a>', true);
+    assert.match(webHtml, /target="_blank"/i);
+  });
+
+  it('permite apenas o script de cliques conhecido no iframe web', () => {
+    assert.equal(createHash('sha256').update(EMAIL_LINK_BRIDGE_SCRIPT).digest('base64'), EMAIL_LINK_BRIDGE_HASH);
+    assert.ok(emailContentSecurityPolicy(true, true).includes(`script-src 'sha256-${EMAIL_LINK_BRIDGE_HASH}'`));
+    assert.doesNotMatch(emailContentSecurityPolicy(true), /script-src/);
+    const desktop = JSON.parse(readFileSync(new URL('../../desktop/src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+    const web = JSON.parse(readFileSync(new URL('../../../vercel.json', import.meta.url), 'utf8'));
+    assert.ok(desktop.app.security.csp.includes(`'sha256-${EMAIL_LINK_BRIDGE_HASH}'`));
+    assert.ok(web.headers.some((entry: { headers: { key: string; value: string }[] }) => entry.headers.some((header) => header.key === 'Content-Security-Policy' && header.value.includes(`'sha256-${EMAIL_LINK_BRIDGE_HASH}'`))));
   });
 });
 
