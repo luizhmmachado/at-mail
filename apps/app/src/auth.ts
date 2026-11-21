@@ -73,6 +73,10 @@ async function openExternal(url: string): Promise<void> {
       // Sem o plugin, cai no comportamento padrão da WebView.
     }
   }
+  if (Platform.OS === 'web' && !isTauriRuntime()) {
+    globalThis.location.assign(url);
+    return;
+  }
   await Linking.openURL(url);
 }
 

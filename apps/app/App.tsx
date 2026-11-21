@@ -9,7 +9,7 @@ import {
   useFonts
 } from '@expo-google-fonts/inter';
 import { AppShell, MailStoreProvider } from '@mail/ui';
-import type { NewMessageSubmission } from '@mail/ui';
+import type { NewMessageAttachment, NewMessageSubmission } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
@@ -115,7 +115,7 @@ export default function App() {
     void syncEngine.syncChannel('email');
   }
 
-  async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string): Promise<void> {
+  async function handleSend(thread: UnifiedThread, body: string, chatThreadName?: string, attachments: NewMessageAttachment[] = []): Promise<void> {
     const messages = store.getThreadMessages(thread.id);
     const last = messages[messages.length - 1];
     if (!last) throw new Error('Não encontrei uma mensagem para responder.');
@@ -127,7 +127,7 @@ export default function App() {
       const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now(), chatThreadName);
       store.actions.upsertMessages([optimisticMessage]);
       try {
-        const receipt = await sendChatReply(last.accountId, last.spaceId, chatThreadName, body);
+        const receipt = await sendChatReply(last.accountId, last.spaceId, chatThreadName, body, attachments);
         if (receipt !== undefined) {
           store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt, chatThreadName)]);
           store.actions.removeMessages([optimisticMessage.id]);
@@ -157,12 +157,13 @@ export default function App() {
     if (DEMO_MODE) return;
     const reactions = message.reactions ?? [];
     const existing = reactions.find((reaction) => reaction.emoji === emoji);
+    const remove = existing?.own === true;
     const optimisticReactions = existing === undefined
-      ? [...reactions, { emoji, count: 1 }]
-      : reactions.map((reaction) => reaction.emoji === emoji ? { ...reaction, count: reaction.count + 1 } : reaction);
+      ? [...reactions, { emoji, count: 1, own: true }]
+      : reactions.flatMap((reaction) => reaction.emoji !== emoji ? [reaction] : remove && reaction.count <= 1 ? [] : [{ ...reaction, count: reaction.count + (remove ? -1 : 1), own: !remove }]);
     store.actions.upsertMessages([{ ...message, reactions: optimisticReactions }]);
     try {
-      await addChatReaction(message.accountId, message.id, emoji);
+      await addChatReaction(message.accountId, message.id, emoji, remove);
     } catch (error) {
       store.actions.upsertMessages([message]);
       throw error;
@@ -208,7 +209,7 @@ export default function App() {
       const optimisticMessage = createLocalChatMessage(account, optimisticName, optimisticSpaceName, recipient, true, message.body, Date.now());
       store.actions.upsertMessages([optimisticMessage]);
       try {
-        const receipt = await sendChatMessage(message.accountId, recipient, message.body);
+        const receipt = await sendChatMessage(message.accountId, recipient, message.body, message.attachments);
         if (receipt !== undefined) {
           store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
           store.actions.removeMessages([optimisticMessage.id]);
@@ -272,10 +273,6 @@ export default function App() {
     if (DEMO_MODE) return;
     void (async () => {
       try {
-        if ((await sessionToken()) !== null) {
-          await activateSession();
-          return;
-        }
         // Um login iniciado antes de o app ser fechado pode já ter sido concluído no navegador.
         const pending = await pendingLoginState();
         if (pending !== null) {
@@ -286,6 +283,10 @@ export default function App() {
           } catch {
             // Sem code pendente: segue para a tela de login.
           }
+        }
+        if ((await sessionToken()) !== null) {
+          await activateSession();
+          return;
         }
         setAuthenticated(false);
       } catch (error) {
@@ -366,6 +367,7 @@ export default function App() {
         : (
             <MailStoreProvider store={store}>
               <AppShell
+                appIcon={require('./assets/icon.png')}
                 onSend={handleSend}
                 onReactChat={handleReactChat}
                 onAddAccount={() => void beginAddAccount()}

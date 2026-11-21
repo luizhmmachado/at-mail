@@ -23,11 +23,12 @@ import {
 import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
 import { Glyph, type GlyphName } from './LucideGlyph';
+import { selectMessageAttachments, type NewMessageAttachment } from './NewMessageComposer';
 
 export interface ReaderPaneProps {
   thread: UnifiedThread | undefined;
   onBack?: () => void;
-  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string) => Promise<void>;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[]) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
 }
 
@@ -49,6 +50,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const replyScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const [selectedChatThread, setSelectedChatThread] = useState<{ conversationId: string; id: string }>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [attachmentsByDraft, setAttachmentsByDraft] = useState<Record<string, NewMessageAttachment[]>>({});
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
   const mobile = onBack !== undefined;
@@ -59,6 +61,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
     : undefined;
   const draftKey = JSON.stringify([thread?.id, activeChatThread?.id ?? 'main']);
   const draft = drafts[draftKey] ?? '';
+  const attachments = attachmentsByDraft[draftKey] ?? [];
   const setDraft = (value: string): void => {
     setDrafts((current) => ({ ...current, [draftKey]: value }));
   };
@@ -116,12 +119,13 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
   const canModifyEmail = thread.channel !== 'chat';
   const isChatThread = thread.channel === 'chat';
   const send = async (): Promise<void> => {
-    if (!onSend || draft.trim().length === 0 || sending) return;
+    if (!onSend || (draft.trim().length === 0 && attachments.length === 0) || sending) return;
     setSending(true);
     setNotice(undefined);
     try {
-      await onSend(thread, draft.trim(), activeChatThread?.threadName);
+      await onSend(thread, draft.trim(), activeChatThread?.threadName, attachments);
       setDraft('');
+      setAttachmentsByDraft((current) => ({ ...current, [draftKey]: [] }));
       actions.toggleCompose(false);
       setNotice('Mensagem enviada.');
     } catch (error) {
@@ -329,7 +333,9 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
           />
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: theme.space[2] }}>
-            <Glyph name="attach" size={17} color={theme.colors.textSecondary} />
+            {isChatThread && <Pressable accessibilityRole="button" accessibilityLabel="Anexar arquivos" disabled={sending} onPress={() => {
+              void selectMessageAttachments(attachments).then((next) => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: next }))).catch((error) => setNotice(error instanceof Error ? error.message : 'Não foi possível anexar o arquivo.'));
+            }}><Glyph name="attach" size={17} color={theme.colors.textSecondary} /></Pressable>}
             <Text
               style={{
                 ...typeStyle(theme, 'composeBody'),
@@ -340,13 +346,13 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
               A
             </Text>
             <View style={{ flex: 1 }} />
-            <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>
+            {!mobile && <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>
               {platform === 'macos' || platform === 'ios' ? '⌘' : 'Ctrl'} Enter para enviar
-            </Text>
+            </Text>}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={isChatThread ? 'Enviar mensagem' : 'Enviar resposta'}
-              accessibilityState={{ disabled: draft.trim().length === 0 }}
+              accessibilityState={{ disabled: draft.trim().length === 0 && attachments.length === 0 }}
               onPress={() => void send()}
               style={{
                 width: theme.layout.sendButtonWidth,
@@ -357,14 +363,15 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
                 justifyContent: 'center',
                 gap: 6,
                 borderRadius: theme.radius.md,
-                backgroundColor: draft.trim().length === 0 ? theme.colors.borderStrong : theme.colors.textPrimary,
-                opacity: draft.trim().length === 0 || sending ? 0.6 : 1
+                backgroundColor: draft.trim().length === 0 && attachments.length === 0 ? theme.colors.borderStrong : theme.colors.textPrimary,
+                opacity: (draft.trim().length === 0 && attachments.length === 0) || sending ? 0.6 : 1
               }}
             >
               <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.surface }}>{sending ? 'Enviando…' : 'Enviar'}</Text>
               <Glyph name="arrow" size={14} color={theme.colors.surface} />
             </Pressable>
           </View>
+          {attachments.map((attachment, index) => <Pressable key={`${attachment.fileName}-${index}`} accessibilityRole="button" accessibilityLabel={`Remover ${attachment.fileName}`} onPress={() => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: attachments.filter((_, itemIndex) => itemIndex !== index) }))}><Text numberOfLines={1} style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>{attachment.fileName} · Remover</Text></Pressable>)}
         </View>
 
         <Text
@@ -689,6 +696,12 @@ function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages:
                     color={theme.colors.textPrimary}
                     flush
                   />
+                  {message.attachments?.map((attachment) => (
+                    <Pressable key={attachment.id} accessibilityRole="link" accessibilityLabel={`Abrir anexo ${attachment.fileName}`} disabled={!attachment.downloadUrl} onPress={() => attachment.downloadUrl && void Linking.openURL(attachment.downloadUrl)} style={{ marginTop: theme.space[2], gap: theme.space[1] }}>
+                      {attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl && <Image source={{ uri: attachment.thumbnailUrl }} resizeMode="contain" style={{ width: 200, maxWidth: '100%', height: 150 }} />}
+                      <Text selectable style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.accent }}>{attachment.fileName}</Text>
+                    </Pressable>
+                  ))}
                   {!message.id.includes(':optimistic:') && <ChatReactionControls message={message} onReactChat={onReactChat} />}
                 </View>
                 {renderThreadAction?.(message)}
@@ -731,9 +744,10 @@ function ChatReactionControls({ message, onReactChat }: { message: ChatMessage; 
             key={reaction.emoji}
             accessibilityRole="button"
             accessibilityLabel={`Reagir com ${reaction.emoji}, ${reaction.count} reações`}
+            accessibilityState={{ selected: reaction.own === true }}
             disabled={sendingEmoji !== undefined}
             onPress={() => void addReaction(reaction.emoji)}
-            style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, borderRadius: theme.radius.pill, backgroundColor: theme.colors.surface, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle }}
+            style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, borderRadius: theme.radius.pill, backgroundColor: reaction.own ? theme.colors.accentMuted : theme.colors.surface, borderWidth: theme.border.hairline, borderColor: reaction.own ? theme.colors.accent : theme.colors.borderSubtle }}
           >
             <Text>{reaction.emoji}</Text>
             <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>{reaction.count}</Text>
@@ -801,9 +815,14 @@ function MessageBody({
   flush?: boolean;
 }): ReactElement {
   const theme = useTheme();
-  // Imagens remotas só carregam depois de um clique explícito: sem isso cada
-  // abertura do e-mail avisa o remetente (IP, horário e confirmação de leitura).
-  const [imagesAllowed, setImagesAllowed] = useState(false);
+  const [imagePreferences, setImagePreferences] = useState<Record<string, boolean>>({});
+  const sender = message.participants[0]?.email.trim().toLowerCase() ?? '';
+  const preferenceKey = `atmail.images.blocked:${sender}`;
+  let blockedByDefault = false;
+  try {
+    blockedByDefault = sender.length > 0 && globalThis.localStorage?.getItem(preferenceKey) === 'true';
+  } catch {}
+  const imagesAllowed = imagePreferences[sender] ?? !blockedByDefault;
   if (Platform.OS === 'web' && message.channel === 'email' && message.bodyHtml) {
     const iframe = createElement('iframe', {
       title: `Corpo do e-mail: ${message.subject}`,
@@ -818,15 +837,17 @@ function MessageBody({
         backgroundColor: theme.colors.surface
       }
     });
-    if (imagesAllowed) {
-      return <View style={{ width: '100%', marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0 }}>{iframe}</View>;
-    }
     return (
       <View style={{ width: '100%', marginTop: role === 'readerBody' ? theme.space[2] + 2 : 0 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Carregar imagens deste remetente"
-          onPress={() => setImagesAllowed(true)}
+          accessibilityLabel={imagesAllowed ? 'Não carregar imagens deste remetente' : 'Carregar imagens deste remetente'}
+          onPress={() => {
+            setImagePreferences((current) => ({ ...current, [sender]: !imagesAllowed }));
+            try {
+              if (sender.length > 0) globalThis.localStorage?.setItem(preferenceKey, String(imagesAllowed));
+            } catch {}
+          }}
           style={{
             alignSelf: 'flex-start',
             marginBottom: theme.space[2],
@@ -838,7 +859,7 @@ function MessageBody({
             backgroundColor: theme.colors.surface
           }}
         >
-          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Carregar imagens deste remetente</Text>
+          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>{imagesAllowed ? 'Não carregar imagens deste remetente' : 'Carregar imagens deste remetente'}</Text>
         </Pressable>
         {iframe}
       </View>
@@ -847,6 +868,7 @@ function MessageBody({
   const parts = message.bodyText.split(URL_PATTERN);
   return (
     <Text
+      selectable
       style={{
         ...typeStyle(theme, role),
         color,

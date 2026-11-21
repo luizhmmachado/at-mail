@@ -90,6 +90,7 @@ export interface EmailMessage extends BaseMessage {
 export interface ChatReactionSummary {
   emoji: string;
   count: number;
+  own?: boolean;
 }
 
 export interface ChatMessage extends BaseMessage {
@@ -103,6 +104,7 @@ export interface ChatMessage extends BaseMessage {
   /** Resposta na thread, em vez da mensagem que a iniciou. */
   isThreadReply?: boolean;
   reactions?: ChatReactionSummary[];
+  attachments?: { id: string; fileName: string; mimeType: string; thumbnailUrl?: string; downloadUrl?: string }[];
 }
 
 export type MailMessage = EmailMessage | ChatMessage;

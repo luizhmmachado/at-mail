@@ -17,6 +17,24 @@ export interface NewMessageAttachment {
   base64: string;
 }
 
+export async function selectMessageAttachments(attachments: NewMessageAttachment[]): Promise<NewMessageAttachment[]> {
+  const result = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true });
+  if (result.canceled) return attachments;
+  if (attachments.length + result.assets.length > MAX_ATTACHMENTS) throw new Error(`Adicione no máximo ${MAX_ATTACHMENTS} arquivos por mensagem.`);
+  const next = [...attachments];
+  let totalBytes = attachments.reduce((total, attachment) => total + attachment.sizeInBytes, 0);
+  for (const asset of result.assets) {
+    const file = asset.base64 === undefined ? new File(asset.uri) : undefined;
+    const sizeInBytes = asset.size ?? file?.size ?? Math.ceil((asset.base64?.length ?? 0) * 0.75);
+    if (totalBytes + sizeInBytes > MAX_ATTACHMENTS_BYTES) throw new Error('O tamanho total dos anexos não pode ultrapassar 3 MB.');
+    const encoded = asset.base64 ?? await file!.base64();
+    const base64 = encoded.includes(',') ? encoded.slice(encoded.indexOf(',') + 1) : encoded;
+    next.push({ fileName: asset.name, mimeType: asset.mimeType || file?.type || 'application/octet-stream', sizeInBytes, base64 });
+    totalBytes += sizeInBytes;
+  }
+  return next;
+}
+
 export interface NewMessageSubmission {
   channel: ChannelKind;
   accountId: AccountId;
@@ -51,39 +69,13 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
   const selectedAccount = availableAccounts.find((account) => account.id === accountId) ?? availableAccounts[0];
   const recipients = recipientsText.split(/[;,]/).map((recipient) => recipient.trim()).filter(Boolean);
   const recipientsValid = recipients.length > 0 && recipients.every((recipient) => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(recipient));
-  const hasContent = body.trim().length > 0 || (channel === 'email' && attachments.length > 0);
+  const hasContent = body.trim().length > 0 || attachments.length > 0;
   const canSend = selectedAccount !== undefined && recipientsValid && (channel === 'email' || recipients.length === 1) && hasContent && onSend !== undefined;
 
   async function pickAttachments(): Promise<void> {
     setError(undefined);
     try {
-      const result = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true });
-      if (result.canceled) return;
-      if (attachments.length + result.assets.length > MAX_ATTACHMENTS) {
-        setError(`Adicione no máximo ${MAX_ATTACHMENTS} arquivos por mensagem.`);
-        return;
-      }
-
-      const next: NewMessageAttachment[] = [];
-      let totalBytes = attachments.reduce((total, attachment) => total + attachment.sizeInBytes, 0);
-      for (const asset of result.assets) {
-        const file = asset.base64 === undefined ? new File(asset.uri) : undefined;
-        const sizeInBytes = asset.size ?? file?.size ?? Math.ceil((asset.base64?.length ?? 0) * 0.75);
-        if (totalBytes + sizeInBytes > MAX_ATTACHMENTS_BYTES) {
-          setError('O tamanho total dos anexos não pode ultrapassar 3 MB.');
-          return;
-        }
-        const encoded = asset.base64 ?? await file!.base64();
-        const base64 = encoded.includes(',') ? encoded.slice(encoded.indexOf(',') + 1) : encoded;
-        next.push({
-          fileName: asset.name,
-          mimeType: asset.mimeType || file?.type || 'application/octet-stream',
-          sizeInBytes,
-          base64
-        });
-        totalBytes += sizeInBytes;
-      }
-      setAttachments((current) => [...current, ...next]);
+      setAttachments(await selectMessageAttachments(attachments));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Não foi possível anexar o arquivo.');
     }
@@ -167,7 +159,7 @@ export function NewMessageComposer({ visible, accounts, onClose, onAddAccount, o
               style={{ ...typeStyle(theme, 'body'), minHeight: 44, marginTop: 6, paddingHorizontal: 12, borderWidth: theme.border.hairline, borderColor: theme.colors.borderSubtle, borderRadius: theme.radius.lg, color: theme.colors.textPrimary }}
             />
 
-            {channel === 'email' && (
+            {(
               <>
                 <Text style={{ ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary, marginTop: 16 }}>ASSUNTO</Text>
                 <TextInput

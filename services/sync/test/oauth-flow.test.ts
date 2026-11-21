@@ -119,6 +119,70 @@ describe('nome de espaços do Google Chat', () => {
     assert.deepEqual(chatReactionRequest('👍'), { emoji: { unicode: '👍' } });
   });
 
+  it('identifica e remove a reação da conta autenticada', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    const accountId = 'google:123456:chat';
+    accounts.set(accountId, { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    credentials.add(accountId);
+    const methods: string[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname === '/v1/spaces/open') return Response.json({ name: 'spaces/open' });
+      if (url.pathname.endsWith('/spaceReadState')) return Response.json({ lastReadTime: '2026-11-18T12:00:00Z' });
+      if (url.pathname === '/v1/spaces/open/messages') return Response.json({ messages: [{
+        name: 'spaces/open/messages/one', text: 'Olá', emojiReactionSummaries: [{ emoji: { unicode: '👍' }, reactionCount: 2 }]
+      }] });
+      if (url.pathname === '/v1/spaces/open/messages/one/reactions') {
+        assert.equal(url.searchParams.get('filter'), 'user.name = "users/123456"');
+        return Response.json({ reactions: [{ name: 'spaces/open/messages/one/reactions/own', emoji: { unicode: '👍' } }] });
+      }
+      if (url.pathname === '/v1/spaces/open/messages/one/reactions/own') {
+        methods.push(init?.method ?? 'GET');
+        return Response.json({});
+      }
+      throw new Error(`URL não esperada: ${url}`);
+    });
+    const app = await createAppServer(config, db);
+    const synced = await call(app, 'POST', '/sync/google-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, spaceId: 'spaces/open' }));
+    assert.deepEqual(JSON.parse(synced.body).messages[0].reactions, [{ emoji: '👍', count: 2, own: true }]);
+    const removed = await call(app, 'POST', '/messages/react-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, messageId: `chat:${accountId}:spaces/open/messages/one`, emoji: '👍', remove: true }));
+    assert.equal(removed.status, 200);
+    assert.deepEqual(methods, ['DELETE']);
+    await app.close();
+  });
+
+  it('envia anexos ao espaço e devolve seus metadados na sincronização', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    const accountId = 'chat-attachments';
+    accounts.set(accountId, { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    credentials.add(accountId);
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname === '/upload/v1/spaces/open/attachments:upload') {
+        assert.equal(url.searchParams.get('uploadType'), 'multipart');
+        assert.match(String(init?.body), /foto\.png/);
+        assert.match(String(init?.body), /conteúdo/);
+        return Response.json({ attachmentDataRef: { attachmentUploadToken: 'upload-token' } });
+      }
+      if (url.pathname === '/v1/spaces/open/messages' && init?.method === 'POST') {
+        assert.deepEqual(JSON.parse(String(init.body)).attachment, [{ attachmentDataRef: { attachmentUploadToken: 'upload-token' } }]);
+        return Response.json({ name: 'spaces/open/messages/one', createTime: '2026-11-19T12:00:00Z' });
+      }
+      if (url.pathname === '/v1/spaces/open') return Response.json({ name: 'spaces/open' });
+      if (url.pathname.endsWith('/spaceReadState')) return Response.json({ lastReadTime: '2026-11-18T12:00:00Z' });
+      if (url.pathname === '/v1/spaces/open/messages') return Response.json({ messages: [{ name: 'spaces/open/messages/one', attachment: [{ name: 'spaces/open/messages/one/attachments/file', contentName: 'foto.png', contentType: 'image/png', thumbnailUri: 'https://example.com/thumb', downloadUri: 'https://example.com/download' }] }] });
+      throw new Error(`URL não esperada: ${url}`);
+    });
+    const app = await createAppServer(config, db);
+    const sent = await call(app, 'POST', '/messages/send-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, spaceId: 'spaces/open', body: '', attachments: [{ fileName: 'foto.png', mimeType: 'image/png', base64: Buffer.from('conteúdo').toString('base64') }] }));
+    assert.equal(sent.status, 200);
+    const synced = await call(app, 'POST', '/sync/google-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, spaceId: 'spaces/open' }));
+    assert.deepEqual(JSON.parse(synced.body).messages[0].attachments, [{ id: 'spaces/open/messages/one/attachments/file', fileName: 'foto.png', mimeType: 'image/png', thumbnailUrl: 'https://example.com/thumb', downloadUrl: 'https://example.com/download' }]);
+    await app.close();
+  });
+
   it('retorna o identificador e horário da mensagem criada no Chat', () => {
     assert.deepEqual(chatSendReceipt('spaces/space-1', {
       name: 'spaces/space-1/messages/message-1',
@@ -684,7 +748,8 @@ describe('fluxo OAuth do backend', () => {
 
     const { state: tauriState } = await startLogin(app, '10.0.0.11', 'tauri');
     const tauriCallback = await call(app, 'GET', `/auth/google/callback?code=TAURI_CODE&state=${encodeURIComponent(tauriState)}`, '10.0.0.11');
-    assert.match(tauriCallback.body, /https:\/\/at-mail\.vercel\.app\//);
+    assert.doesNotMatch(tauriCallback.body, /https:\/\/at-mail\.vercel\.app\//);
+    assert.match(tauriCallback.body, /window\.close\(\)/);
 
     const { state: legacyWebState } = await startLogin(app, '10.0.0.13', 'web', 'https://at-mail-web.vercel.app');
     const legacyWebCallback = await call(app, 'GET', `/auth/google/callback?code=LEGACY_WEB_CODE&state=${encodeURIComponent(legacyWebState)}`, '10.0.0.13');

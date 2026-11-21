@@ -12,7 +12,7 @@ import { Glyph } from './LucideGlyph';
  * Reaproveita o token de scrim e a mesma escala tipográfica da caixa unificada:
  * o modal não introduz uma segunda linguagem visual.
  */
-export function CommandPalette(): ReactElement | null {
+export function CommandPalette({ mobile = false }: { mobile?: boolean }): ReactElement | null {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
@@ -77,7 +77,7 @@ export function CommandPalette(): ReactElement | null {
                 color: theme.colors.textPrimary
               }}
             />
-            <Text style={{ ...typeStyle(theme, 'shortcut'), color: theme.colors.textSecondary }}>Esc</Text>
+            {!mobile && <Text style={{ ...typeStyle(theme, 'shortcut'), color: theme.colors.textSecondary }}>Esc</Text>}
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>

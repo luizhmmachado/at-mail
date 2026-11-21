@@ -1,12 +1,12 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
 import type { AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { CommandPalette } from './CommandPalette';
 import { SettingsModal, WorkspaceRail } from './ContextSwitcher';
-import { NewMessageComposer, type NewMessageSubmission } from './NewMessageComposer';
+import { NewMessageComposer, type NewMessageAttachment, type NewMessageSubmission } from './NewMessageComposer';
 import { Glyph, type GlyphName } from './LucideGlyph';
 import { ReaderPane } from './ReaderPane';
 import { UnifiedThreadList } from './UnifiedThreadList';
@@ -15,7 +15,8 @@ import { typeStyle } from '../theme/typography';
 type MobilePane = 'list' | 'reader';
 
 export interface AppShellProps {
-  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string) => Promise<void>;
+  appIcon?: ImageSourcePropType;
+  onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[]) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
@@ -24,16 +25,16 @@ export interface AppShellProps {
   onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
 }
 
-export function AppShell({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
+export function AppShell({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody onSend={onSend} onReactChat={onReactChat} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
+      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
+function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -75,6 +76,7 @@ function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemove
                   onSelectThread={handleSelect}
                   onCompose={openNewMessage}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  appIcon={appIcon}
                   fullScreen
                 />
               </View>
@@ -82,8 +84,8 @@ function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemove
             </>
           )}
         </View>
-        <SyncStatus />
-        <CommandPalette />
+        <SyncStatus mobile />
+        <CommandPalette mobile />
         <SettingsModal
           visible={settingsOpen}
           onClose={() => setSettingsOpen(false)}
@@ -144,7 +146,7 @@ function ShellBody({ onSend, onReactChat, onAddAccount, onMoveAccounts, onRemove
 }
 
 /** Feedback persistente e discreto durante a primeira carga/sync incremental. */
-function SyncStatus(): ReactElement | null {
+function SyncStatus({ mobile = false }: { mobile?: boolean }): ReactElement | null {
   const theme = useTheme();
   const { sync, accounts } = useMailSnapshot();
   const error = accounts.find((account) => account.lastError)?.lastError ?? sync.lastError;
@@ -152,12 +154,13 @@ function SyncStatus(): ReactElement | null {
 
   return (
     <View
+      pointerEvents="none"
       role="status"
       accessibilityLiveRegion="polite"
       accessibilityLabel={error ? `Falha na sincronização: ${error}` : 'Atualizando mensagens'}
       style={{
         position: 'absolute',
-        top: theme.space[3],
+        ...(mobile ? { bottom: theme.layout.mobileBottomNavHeight + theme.space[3] } : { top: theme.space[3] }),
         right: theme.space[4],
         zIndex: 20,
         flexDirection: 'row',
