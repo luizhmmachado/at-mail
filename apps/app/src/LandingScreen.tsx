@@ -1,12 +1,12 @@
-import { useRef } from 'react';
-import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
+import { useRef, useState } from 'react';
+import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ImageSourcePropType, type LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
+import { latestDownloadUrl, type DownloadPlatform } from './downloads';
 
-const RELEASES_URL = 'https://github.com/luizhmmachado/at-mail/releases/latest';
 const FONT_REGULAR = 'Inter_400Regular';
 const FONT_MEDIUM = 'Inter_500Medium';
 const FONT_SEMIBOLD = 'Inter_600SemiBold';
 
-type SectionName = 'resources' | 'flow' | 'faq';
+type SectionName = 'resources' | 'flow' | 'downloads' | 'faq';
 
 export interface LandingScreenProps {
   onOpenApp: () => void;
@@ -21,7 +21,9 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
   const mobilePreviewWidth = Math.min(contentWidth, 552);
   const mobilePreviewHeight = mobilePreviewWidth * (600 / 552);
   const scrollView = useRef<ScrollViewInstance | null>(null);
-  const sectionOffsets = useRef<Record<SectionName, number>>({ resources: 0, flow: 0, faq: 0 });
+  const sectionOffsets = useRef<Record<SectionName, number>>({ resources: 0, flow: 0, downloads: 0, faq: 0 });
+  const [downloading, setDownloading] = useState<DownloadPlatform>();
+  const [downloadError, setDownloadError] = useState<string>();
 
   function rememberSection(name: SectionName) {
     return (event: LayoutChangeEvent): void => {
@@ -31,6 +33,21 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
 
   function scrollToSection(name: SectionName): void {
     scrollView.current?.scrollTo({ y: sectionOffsets.current[name], animated: true });
+  }
+
+  async function download(platform: DownloadPlatform): Promise<void> {
+    if (downloading !== undefined) return;
+    setDownloading(platform);
+    setDownloadError(undefined);
+    try {
+      const url = await latestDownloadUrl(platform);
+      if (Platform.OS === 'web') window.location.assign(url);
+      else await Linking.openURL(url);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Não foi possível iniciar o download.');
+    } finally {
+      setDownloading(undefined);
+    }
   }
 
   return (
@@ -46,6 +63,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
               <View style={styles.navigation}>
                 <NavLink label="Recursos" onPress={() => scrollToSection('resources')} />
                 <NavLink label="Como funciona" onPress={() => scrollToSection('flow')} />
+                <NavLink label="Downloads" onPress={() => scrollToSection('downloads')} />
                 <NavLink label="Perguntas" onPress={() => scrollToSection('faq')} />
                 <Pressable accessibilityRole="button" style={styles.headerButton} onPress={onOpenApp}>
                   <Text style={styles.headerButtonText}>Conhecer o @mail  →</Text>
@@ -124,12 +142,6 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
               <Text style={[styles.contextLabels, !isWide && styles.contextLabelsMobile]}>TRABALHO   /   ESTUDOS   /   PESSOAL</Text>
             </View>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.downloadScroll} contentContainerStyle={styles.downloads}>
-            <Text style={styles.downloadsLabel}>BAIXAR O @MAIL</Text>
-            <DownloadLink label="Android" />
-            <DownloadLink label="Windows" />
-            <DownloadLink label="Linux" />
-          </ScrollView>
         </View>
       </View>
 
@@ -177,6 +189,46 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
               <NumberedLine number="03" label="Trabalho e vida pessoal organizados" />
             </View>
           </View>
+        </View>
+      </View>
+
+      <View onLayout={rememberSection('downloads')} style={styles.downloadSection}>
+        <View style={contentWidthStyle}>
+          <Text style={styles.eyebrow}>BAIXE O @MAIL</Text>
+          <Text style={[styles.downloadTitle, !isWide && styles.downloadTitleMobile]}>Suas conversas. Na sua plataforma.</Text>
+          <Text style={styles.downloadDescription}>Escolha onde continuar: no celular, no Windows ou no Linux.</Text>
+          <View style={[styles.downloadCards, !isWide && styles.downloadCardsMobile]}>
+            <DownloadCard
+              title="Mobile"
+              description={'Leve sua caixa de entrada com você.\nSuas conversas, sempre por perto.'}
+              buttonLabel="Baixar para Android"
+              icon={require('./figma-download-mobile.png')}
+              busy={downloading !== undefined}
+              loading={downloading === 'android'}
+              onPress={() => void download('android')}
+            />
+            <DownloadCard
+              title="Windows"
+              description={'Um espaço para suas conversas\nno computador, sem tantas abas.'}
+              buttonLabel="Baixar para Windows"
+              icon={require('./figma-download-windows.png')}
+              busy={downloading !== undefined}
+              loading={downloading === 'windows'}
+              onPress={() => void download('windows')}
+            />
+            <DownloadCard
+              title="Linux"
+              description={'Mantenha e-mails e chats por perto,\ntambém no seu ambiente Linux.'}
+              buttonLabel="Baixar para Linux"
+              icon={require('./figma-download-linux.png')}
+              busy={downloading !== undefined}
+              loading={downloading === 'linux'}
+              onPress={() => void download('linux')}
+            />
+          </View>
+          {downloadError !== undefined && (
+            <Text accessibilityRole="alert" style={styles.downloadError}>{downloadError}</Text>
+          )}
         </View>
       </View>
 
@@ -292,11 +344,28 @@ function InboxPreviewRow({ icon, name, subject, context }: { icon: string; name:
   );
 }
 
-function DownloadLink({ label }: { label: string }) {
+function DownloadCard({ title, description, buttonLabel, icon, busy, loading, onPress }: {
+  title: string;
+  description: string;
+  buttonLabel: string;
+  icon: ImageSourcePropType;
+  busy: boolean;
+  loading: boolean;
+  onPress: () => void;
+}) {
   return (
-    <Pressable accessibilityRole="link" style={styles.downloadLink} onPress={() => void Linking.openURL(RELEASES_URL)}>
-      <Text style={styles.downloadLinkText}>{label}  →</Text>
-    </Pressable>
+    <View style={styles.downloadCard}>
+      <View style={styles.downloadIconBackground}>
+        <Image source={icon} style={styles.downloadIcon} />
+      </View>
+      <Text style={styles.downloadCardTitle}>{title}</Text>
+      <Text style={styles.downloadCardDescription}>{description}</Text>
+      <View style={{ flex: 1 }} />
+      <Pressable accessibilityRole="button" accessibilityLabel={buttonLabel} accessibilityState={{ disabled: busy, busy: loading }} disabled={busy} style={styles.downloadButton} onPress={onPress}>
+        <Text style={styles.downloadButtonText}>{loading ? 'Preparando download…' : buttonLabel}</Text>
+        <Image source={require('./figma-download-arrow.png')} style={styles.downloadArrow} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -337,7 +406,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FFFFFF' },
   page: { alignItems: 'center' },
   contentWidth: { width: '100%', maxWidth: 1200, alignSelf: 'center' },
-  contentWidthMobile: { paddingHorizontal: 20 },
   contentWidthMobile: { paddingHorizontal: 20 },
   header: { width: '100%', minHeight: 88, backgroundColor: '#FFFFFF' },
   headerInner: { minHeight: 88, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -402,11 +470,21 @@ const styles = StyleSheet.create({
   contextDescriptionMobile: { fontSize: 14, lineHeight: 22 },
   contextLabels: { marginTop: 44, color: '#A1A1AA', fontFamily: FONT_MEDIUM, fontSize: 9 },
   contextLabelsMobile: { marginTop: 30, fontSize: 8 },
-  downloadScroll: { width: '100%', marginTop: 28, borderTopWidth: 1, borderTopColor: '#E4E4E7' },
-  downloads: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 22 },
-  downloadsLabel: { color: '#65656F', fontFamily: FONT_SEMIBOLD, fontSize: 10 },
-  downloadLink: { paddingVertical: 8 },
-  downloadLinkText: { color: '#18181B', fontFamily: FONT_MEDIUM, fontSize: 13 },
+  downloadSection: { width: '100%', paddingTop: 64, paddingBottom: 88, backgroundColor: '#FAFAFA' },
+  downloadTitle: { marginTop: 18, color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 44, lineHeight: 49, letterSpacing: -1.76 },
+  downloadTitleMobile: { fontSize: 31, lineHeight: 38, letterSpacing: -0.8 },
+  downloadDescription: { marginTop: 20, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 17, lineHeight: 26 },
+  downloadCards: { flexDirection: 'row', alignItems: 'stretch', gap: 24, marginTop: 44 },
+  downloadCardsMobile: { flexDirection: 'column' },
+  downloadCard: { flex: 1, minHeight: 314, padding: 28, borderWidth: 1, borderColor: '#E4E4E7', borderRadius: 16, backgroundColor: '#FFFFFF' },
+  downloadIconBackground: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#EEF2FB' },
+  downloadIcon: { width: 28, height: 28 },
+  downloadCardTitle: { marginTop: 20, color: '#18181B', fontFamily: FONT_SEMIBOLD, fontSize: 25, lineHeight: 38 },
+  downloadCardDescription: { marginTop: 8, color: '#65656F', fontFamily: FONT_REGULAR, fontSize: 15, lineHeight: 23 },
+  downloadButton: { minHeight: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 18, borderRadius: 7, backgroundColor: '#18181B' },
+  downloadButtonText: { flex: 1, color: '#FFFFFF', fontFamily: FONT_MEDIUM, fontSize: 15 },
+  downloadArrow: { width: 20, height: 20 },
+  downloadError: { marginTop: 16, color: '#B42318', fontFamily: FONT_REGULAR, fontSize: 14 },
   flow: { width: '100%', paddingTop: 64, paddingBottom: 70, backgroundColor: '#FAFAFA' },
   flowRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 64 },
   flowIntro: { flex: 1 },
