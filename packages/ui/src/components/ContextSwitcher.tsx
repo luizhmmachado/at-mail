@@ -50,9 +50,29 @@ export function WorkspaceRail({ onAddAccount, onOpenSettings }: WorkspaceRailPro
         <ContextTile
           label="Tudo"
           accent={theme.colors.accent}
-          selected={snapshot.view.contextId === 'all'}
+          selected={snapshot.view.contextId === 'all' && !snapshot.view.starredOnly}
           onPress={() => actions.setContext('all')}
         />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Favoritos"
+          accessibilityState={{ selected: snapshot.view.starredOnly }}
+          onPress={() => actions.setStarredOnly(true)}
+          style={{
+            width: theme.layout.contextTileWidth,
+            height: theme.layout.contextTileHeight,
+            borderRadius: theme.radius.xxl,
+            backgroundColor: snapshot.view.starredOnly ? theme.colors.accentMuted : 'transparent',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6
+          }}
+        >
+          <Glyph name="star" size={16} color={snapshot.view.starredOnly ? theme.colors.accent : theme.colors.textSecondary} />
+          <Text numberOfLines={1} style={{ ...typeStyle(theme, 'railContext', snapshot.view.starredOnly ? 'medium' : 'regular'), color: snapshot.view.starredOnly ? theme.colors.accent : theme.colors.textSecondary }}>
+            Favoritos
+          </Text>
+        </Pressable>
         {snapshot.contexts.map((context) => (
           <ContextTile
             key={context.id}

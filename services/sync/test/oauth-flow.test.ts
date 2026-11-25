@@ -9,7 +9,7 @@ import { encrypt, hashToken, pkceChallenge } from '../src/crypto';
 import { databasePoolConfig, serverlessDatabaseUrl } from '../src/db';
 import { SUPABASE_CA } from '../src/supabase-ca';
 import type { Db } from '../src/db';
-import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
+import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, fetchGmail, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -32,6 +32,60 @@ const config: SyncConfig = {
 };
 
 describe('nome de espaços do Google Chat', () => {
+  it('identifica credenciais revogadas sem confundir falhas temporárias com autenticação', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('chat-1', { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    credentials.add('chat-1');
+    let response = Response.json({ error: 'invalid_grant' }, { status: 400 });
+    t.mock.method(globalThis, 'fetch', async () => response.clone());
+    const app = await createAppServer(config, db);
+    const sync = () => call(app, 'POST', '/sync/google-chat', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'chat-1' }));
+    const revoked = await sync();
+    assert.equal(revoked.status, 401);
+    assert.equal(JSON.parse(revoked.body).errorCode, 'GOOGLE_AUTH_REVOKED');
+    response = Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+    const unavailable = await sync();
+    assert.equal(unavailable.status, 500);
+    assert.equal(JSON.parse(unavailable.body).errorCode, undefined);
+    response = Response.json({ access_token: 'access' });
+    let apiStatus = 401;
+    let reason = 'invalidCredentials';
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => String(input).includes('oauth2.googleapis.com')
+      ? response.clone()
+      : Response.json({ error: { errors: [{ reason }] } }, { status: apiStatus }));
+    assert.equal((await sync()).status, 401);
+    apiStatus = 403;
+    reason = 'ACCESS_TOKEN_SCOPE_INSUFFICIENT';
+    assert.equal(JSON.parse((await sync()).body).errorCode, 'GOOGLE_AUTH_REVOKED');
+    reason = 'rateLimitExceeded';
+    assert.equal((await sync()).status, 500);
+  });
+
+  it('carrega imagem do Chat com credencial da conta e rejeita acesso de outra conta', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('chat-1', { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    accounts.set('other', { userId: 'user-2', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+    credentials.add('chat-1');
+    const urls: string[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      urls.push(url);
+      if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+      assert.equal((init?.headers as Record<string, string>).authorization, 'Bearer test-token');
+      if (url.includes('/attachments/')) return Response.json({ contentType: 'image/png', attachmentDataRef: { resourceName: 'media/token' } });
+      if (url.endsWith('/v1/media/media/token?alt=media')) return new Response(Buffer.from('imagem'));
+      throw new Error(`URL não esperada: ${url}`);
+    });
+    const app = await createAppServer(config, db);
+    const send = (accountId: string, attachmentName: string) => call(app, 'POST', '/messages/chat-image', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, attachmentName }));
+    assert.equal((await send('other', 'spaces/s/messages/m/attachments/a')).status, 404);
+    assert.equal((await send('chat-1', 'spaces/s/messages/m/attachments/../a')).status, 400);
+    assert.equal(urls.length, 0);
+    const image = await send('chat-1', 'spaces/s/messages/m/attachments/a');
+    assert.equal(image.status, 200);
+    assert.deepEqual(JSON.parse(image.body), { mimeType: 'image/png', base64: Buffer.from('imagem').toString('base64') });
+  });
+
   it('sincroniza páginas de espaços e consulta a conversa aberta sem listar os outros espaços', async (t) => {
     const { db, accounts, credentials } = createFakeDb();
     accounts.set('chat-1', { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
@@ -291,6 +345,53 @@ describe('conexão PostgreSQL serverless', () => {
 });
 
 describe('sincronização do Gmail', () => {
+  it('carrega favoritos antigos de todas as páginas e retém o cursor anterior à varredura', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    const paths: string[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname.endsWith('/profile')) return Response.json({ historyId: '100' });
+      if (url.pathname.endsWith('/messages')) {
+        if (url.searchParams.get('q') !== 'is:starred') return Response.json({ messages: [{ id: 'recent' }] });
+        return Response.json(url.searchParams.get('pageToken')
+          ? { messages: [{ id: 'old-2' }] }
+          : { messages: [{ id: 'old-1' }, { id: 'recent' }], nextPageToken: 'next' });
+      }
+      const id = url.pathname.split('/').pop();
+      return Response.json({ id, threadId: id, historyId: '105', labelIds: ['STARRED'], payload: { headers: [] } });
+    });
+    const result = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work');
+    assert.deepEqual(result.messages.map((message) => message.id), ['gmail:gmail-1:recent', 'gmail:gmail-1:old-1', 'gmail:gmail-1:old-2']);
+    assert.equal(result.cursor, '100');
+    assert.ok(paths.indexOf('/gmail/v1/users/me/profile') < paths.indexOf('/gmail/v1/users/me/messages'));
+  });
+
+  it('altera favoritos no Gmail apenas para a conta do usuário e valida a conversa', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    accounts.set('other', { userId: 'user-2', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    const changes: unknown[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+      assert.equal(String(input), 'https://gmail.googleapis.com/gmail/v1/users/me/threads/thread-1/modify');
+      changes.push(JSON.parse(String(init?.body)));
+      return Response.json({ id: 'thread-1' });
+    });
+    const app = await createAppServer(config, db);
+    const star = (accountId: string, threadId: string, isStarred: boolean) => call(app, 'POST', '/messages/star', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, threadId, isStarred }));
+    assert.equal((await star('other', 'thread-1', true)).status, 404);
+    assert.equal((await star('gmail-1', '../other', true)).status, 400);
+    assert.equal(changes.length, 0);
+    assert.equal((await star('gmail-1', 'thread-1', true)).status, 200);
+    assert.equal((await star('gmail-1', 'thread-1', false)).status, 200);
+    assert.deepEqual(changes, [{ addLabelIds: ['STARRED'] }, { removeLabelIds: ['STARRED'] }]);
+  });
+
   it('sempre consulta as mensagens mais recentes sem reaproveitar pageToken', () => {
     const url = new URL(gmailMessagesUrl());
 
@@ -301,12 +402,12 @@ describe('sincronização do Gmail', () => {
   it('consulta historyId e deduplica as mensagens adicionadas', () => {
     const url = new URL(gmailHistoryUrl('12345', 'next-page'));
     assert.equal(url.searchParams.get('startHistoryId'), '12345');
-    assert.equal(url.searchParams.get('historyTypes'), 'messageAdded');
+    assert.deepEqual(url.searchParams.getAll('historyTypes'), ['messageAdded', 'labelAdded', 'labelRemoved']);
     assert.equal(url.searchParams.get('pageToken'), 'next-page');
     assert.deepEqual(gmailAddedMessageIds({ history: [
       { messagesAdded: [{ message: { id: 'm1' } }, { message: { id: 'm2' } }] },
-      { messagesAdded: [{ message: { id: 'm1' } }] }
-    ] }), ['m1', 'm2']);
+      { messagesAdded: [{ message: { id: 'm1' } }], labelsAdded: [{ message: { id: 'm3' } }], labelsRemoved: [{ message: { id: 'm2' } }] }
+    ] }), ['m1', 'm2', 'm3']);
   });
 });
 
@@ -598,6 +699,30 @@ async function startLogin(app: AppServer, ip: string, platform?: string, origin?
 }
 
 describe('fluxo OAuth do backend', () => {
+  it('reconecta somente a conta selecionada e exige state e PKCE válidos', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('google:expected:gmail', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    const app = await createAppServer(config, db);
+    let subject = 'wrong';
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      if (String(input) === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'access', refresh_token: 'refresh' });
+      if (String(input) === 'https://openidconnect.googleapis.com/v1/userinfo') return Response.json({ sub: subject, email: 'test@example.com' });
+      throw new Error('URL não esperada');
+    });
+    const exchange = async (target: string, invalidVerifier = false) => {
+      const { state, verifier } = await startLogin(app, '127.0.0.1');
+      await call(app, 'GET', `/auth/google/callback?code=CODE&state=${encodeURIComponent(state)}`, '127.0.0.1');
+      return call(app, 'POST', '/auth/google/add', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ state, code: 'CODE', codeVerifier: invalidVerifier ? 'a'.repeat(64) : verifier, accountId: target }));
+    };
+    assert.equal((await exchange('google:expected:gmail', true)).status, 400);
+    assert.equal((await exchange('google:expected:gmail')).status, 409);
+    assert.equal(credentials.size, 0);
+    subject = 'expected';
+    assert.equal((await exchange('google:expected:gmail')).status, 200);
+    assert.ok(credentials.has('google:expected:gmail'));
+    assert.ok(credentials.has('google:expected:chat'));
+  });
+
   it('conclui callback, polling e exchange com PKCE sem permitir reutilizar código ou sessão pendente', async (t) => {
     const { db, rows, accounts, credentials } = createFakeDb();
     const app = await createAppServer(config, db);

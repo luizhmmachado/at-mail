@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ComponentRef, type ReactElement } from 'react';
-import { Image, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import {
   formatRelativeTime,
@@ -34,6 +34,7 @@ export interface ReaderPaneProps {
   onBack?: () => void;
   onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[], formatted?: boolean) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
+  onLoadChatImage?: (accountId: string, attachmentName: string) => Promise<string>;
 }
 
 /**
@@ -43,7 +44,7 @@ export interface ReaderPaneProps {
  * aberta, com o compositor de 132 px ao pé da coluna.
  */
 
-export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPaneProps): ReactElement {
+export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImage }: ReaderPaneProps): ReactElement {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
@@ -199,6 +200,19 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
 
         <IconButton name="clock" label="Adiar e marcar como não lida" onPress={() => actions.markThreadRead(thread.id, false)} />
 
+        {canModifyEmail && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+            accessibilityState={{ disabled: snapshot.ui.pendingStarThreadIds.includes(thread.id) }}
+            disabled={snapshot.ui.pendingStarThreadIds.includes(thread.id)}
+            onPress={() => void actions.toggleThreadStar(thread.id)}
+            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.lg, backgroundColor: thread.flags.isStarred ? theme.colors.accentMuted : 'transparent' }}
+          >
+            <Glyph name="star" size={17} color={thread.flags.isStarred ? theme.colors.accent : theme.colors.textSecondary} fill={thread.flags.isStarred ? theme.colors.accent : 'none'} />
+          </Pressable>
+        )}
+
         <View style={{ flex: 1 }} />
 
         {position >= 0 && (
@@ -256,6 +270,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
             <ChatTimeline
               messages={chatThreads.flatMap((item) => item.root ? [item.root] : [])}
               onReactChat={onReactChat}
+              onLoadChatImage={onLoadChatImage}
               renderThreadAction={(message) => {
                 const item = chatThreads.find((group) => group.root?.id === message.id);
                 return item?.threadName ? (
@@ -299,7 +314,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat }: ReaderPanePr
             {activeChatThread.root === undefined && (
               <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textSecondary }}>Mensagem original fora do histórico carregado</Text>
             )}
-            <ChatTimeline messages={[...(activeChatThread.root ? [activeChatThread.root] : []), ...activeChatThread.replies]} onReactChat={onReactChat} />
+            <ChatTimeline messages={[...(activeChatThread.root ? [activeChatThread.root] : []), ...activeChatThread.replies]} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} />
           </ScrollView>
         </View>
       )}
@@ -634,7 +649,7 @@ function ChatThreadButton({ item, disabled, onPress }: { item: ChatMessageThread
   );
 }
 
-function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages: readonly MailMessage[]; onReactChat?: ReaderPaneProps['onReactChat']; renderThreadAction?: (message: ChatMessage) => ReactElement | null }): ReactElement {
+function ChatTimeline({ messages, onReactChat, onLoadChatImage, renderThreadAction }: { messages: readonly MailMessage[]; onReactChat?: ReaderPaneProps['onReactChat']; onLoadChatImage?: ReaderPaneProps['onLoadChatImage']; renderThreadAction?: (message: ChatMessage) => ReactElement | null }): ReactElement {
   const theme = useTheme();
   return (
     <View style={{ gap: theme.space[1] }}>
@@ -657,45 +672,24 @@ function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages:
             <View
               style={{
                 flexDirection: 'row',
-                alignItems: 'flex-end',
+                alignItems: 'flex-start',
                 gap: theme.space[3],
                 marginTop: startsNewGroup ? theme.space[2] : theme.space[1]
               }}
             >
-              <View
-                style={{
-                  width: 30,
-                  height: startsNewGroup ? 30 : 0,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: theme.radius.pill,
-                  backgroundColor: startsNewGroup ? theme.colors.accentMuted : 'transparent'
-                }}
-              >
-                {startsNewGroup && avatarUrl ? (
-                  <Image
-                    accessibilityLabel={`Foto de ${name}`}
-                    source={{ uri: avatarUrl }}
-                    resizeMode="cover"
-                    style={{ width: 30, height: 30, borderRadius: theme.radius.pill }}
-                  />
-                ) : startsNewGroup ? (
-                  <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.accent }}>
-                    {senderInitials(name)}
-                  </Text>
-                ) : null}
-              </View>
-
               <View style={{ flexShrink: 1, maxWidth: '90%' }}>
                 {startsNewGroup && (
                   <View
                     style={{
                       flexDirection: 'row',
-                      alignItems: 'baseline',
+                      alignItems: 'center',
                       gap: theme.space[2],
                       marginBottom: theme.space[1]
                     }}
                   >
+                    <View style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.pill, backgroundColor: theme.colors.accentMuted }}>
+                      {avatarUrl ? <Image accessibilityLabel={`Foto de ${name}`} source={{ uri: avatarUrl }} resizeMode="cover" style={{ width: 30, height: 30, borderRadius: theme.radius.pill }} /> : <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.accent }}>{senderInitials(name)}</Text>}
+                    </View>
                     <Text numberOfLines={1} style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>
                       {name}
                     </Text>
@@ -721,10 +715,10 @@ function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages:
                     flush
                   />
                   {message.attachments?.map((attachment) => (
-                    <Pressable key={attachment.id} accessibilityRole="link" accessibilityLabel={`Abrir anexo ${attachment.fileName}`} disabled={!attachment.downloadUrl} onPress={() => attachment.downloadUrl && void openMessageLink(attachment.downloadUrl).catch((error) => console.error('Não foi possível abrir o anexo.', error))} style={{ marginTop: theme.space[2], gap: theme.space[1] }}>
-                      {attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl && <Image source={{ uri: attachment.thumbnailUrl }} resizeMode="contain" style={{ width: 200, maxWidth: '100%', height: 150 }} />}
-                      <Text selectable style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.accent }}>{attachment.fileName}</Text>
-                    </Pressable>
+                    <ChatAttachment key={attachment.id} accountId={message.accountId} attachment={attachment} onLoadChatImage={onLoadChatImage} />
+                  ))}
+                  {Array.from(message.bodyText.matchAll(URL_PATTERN), (match) => match[0]).filter((url) => /^https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|avif|bmp)(?:[?#][^\s]*)?$/i.test(url)).map((url) => (
+                    <ChatAttachment key={url} accountId={message.accountId} attachment={{ id: url, fileName: 'Imagem', mimeType: 'image/url', thumbnailUrl: url, downloadUrl: url }} />
                   ))}
                   {!message.id.includes(':optimistic:') && <ChatReactionControls message={message} onReactChat={onReactChat} />}
                 </View>
@@ -734,6 +728,68 @@ function ChatTimeline({ messages, onReactChat, renderThreadAction }: { messages:
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function ChatAttachment({ accountId, attachment, onLoadChatImage }: { accountId: string; attachment: NonNullable<ChatMessage['attachments']>[number]; onLoadChatImage?: ReaderPaneProps['onLoadChatImage'] }): ReactElement {
+  const theme = useTheme();
+  const isImage = attachment.mimeType.toLowerCase().startsWith('image/');
+  const [uri, setUri] = useState<string>();
+  const [loading, setLoading] = useState(isImage);
+  const [failed, setFailed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    if (!isImage) return;
+    setLoading(true);
+    setFailed(false);
+    const request = onLoadChatImage && attachment.id.startsWith('spaces/')
+      ? onLoadChatImage(accountId, attachment.id)
+      : Promise.resolve(attachment.thumbnailUrl ?? attachment.downloadUrl);
+    void request.catch((error) => {
+      console.error('Não foi possível carregar a imagem do Chat.', error);
+      return attachment.thumbnailUrl ?? attachment.downloadUrl;
+    }).then((value) => {
+      if (!active) return;
+      setUri(value);
+      if (!value) {
+        setLoading(false);
+        setFailed(true);
+      }
+    });
+    return () => { active = false; };
+  }, [accountId, attachment.id, attachment.thumbnailUrl, attachment.downloadUrl, isImage, onLoadChatImage]);
+  const link = attachment.downloadUrl ?? (attachment.thumbnailUrl?.startsWith('data:') ? undefined : attachment.thumbnailUrl);
+  const open = (): void => {
+    if (link) void openMessageLink(link).catch((error) => console.error('Não foi possível abrir o anexo.', error));
+    else if (Platform.OS === 'web' && uri?.startsWith('data:')) {
+      const anchor = document.createElement('a');
+      anchor.href = uri;
+      anchor.download = attachment.fileName;
+      anchor.click();
+    }
+  };
+  return (
+    <View style={{ marginTop: theme.space[2], gap: theme.space[1] }}>
+      {isImage && (
+        <Pressable accessibilityRole="button" accessibilityLabel={`Ampliar ${attachment.fileName}`} disabled={!uri || failed || loading} onPress={() => setExpanded(true)} style={{ width: 240, maxWidth: '100%', height: 180, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: theme.radius.lg, overflow: 'hidden' }}>
+          {uri && !failed && <Image source={{ uri }} resizeMode="contain" onLoad={() => setLoading(false)} onError={() => { setLoading(false); setFailed(true); }} style={{ width: '100%', height: '100%' }} />}
+          {loading && <ActivityIndicator accessibilityLabel="Carregando imagem" color={theme.colors.accent} style={{ position: 'absolute' }} />}
+          {failed && <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>Não foi possível carregar a imagem.</Text>}
+        </Pressable>
+      )}
+      <Pressable accessibilityRole="link" accessibilityLabel={`Baixar ${attachment.fileName}`} disabled={!link && !(Platform.OS === 'web' && uri?.startsWith('data:'))} onPress={open}>
+        <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.accent }}>{attachment.fileName}{link || (Platform.OS === 'web' && uri?.startsWith('data:')) ? ' · Baixar' : ' · Indisponível'}</Text>
+      </Pressable>
+      <Modal visible={expanded} transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', padding: theme.space[4] }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Fechar imagem" onPress={() => setExpanded(false)} style={{ alignSelf: 'flex-end', padding: theme.space[3] }}>
+            <Text style={{ ...typeStyle(theme, 'button'), color: '#ffffff' }}>Fechar</Text>
+          </Pressable>
+          {uri && <Image source={{ uri }} resizeMode="contain" style={{ flex: 1, width: '100%' }} />}
+        </View>
+      </Modal>
     </View>
   );
 }

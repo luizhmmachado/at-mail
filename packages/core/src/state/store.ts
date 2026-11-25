@@ -24,6 +24,7 @@ export interface ViewState {
   sentOnly: boolean;
   query: string;
   unreadOnly: boolean;
+  starredOnly: boolean;
   selectedThreadId?: ThreadId;
   /** `false` significa que a seleção foi automática (primeira da lista). */
   selectionPinned: boolean;
@@ -42,6 +43,7 @@ export interface UiState {
   commandPaletteOpen: boolean;
   composeOpen: boolean;
   sidebarCollapsed: boolean;
+  pendingStarThreadIds: readonly ThreadId[];
 }
 
 export interface AppSnapshot {
@@ -62,6 +64,7 @@ export interface AppStoreOptions {
   themeMode?: ThemeMode;
   themePreference?: ThemePreference;
   onMarkMessagesRead?: (messages: readonly MailMessage[], isRead: boolean) => void | Promise<void>;
+  onSetThreadStarred?: (message: Extract<MailMessage, { channel: 'email' }>, isStarred: boolean) => Promise<void>;
 }
 
 const DEFAULT_UI: UiState = {
@@ -69,7 +72,8 @@ const DEFAULT_UI: UiState = {
   themePreference: 'system',
   commandPaletteOpen: false,
   composeOpen: false,
-  sidebarCollapsed: false
+  sidebarCollapsed: false,
+  pendingStarThreadIds: []
 };
 
 export const ALL_CONTEXTS: ContextFilter = 'all';
@@ -86,6 +90,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
       sentOnly: false,
       query: '',
       unreadOnly: false,
+      starredOnly: false,
       selectionPinned: false
     },
     sync: { status: 'idle', inFlightAccounts: [] },
@@ -102,6 +107,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
   if (options.messages) snapshot.messages = sortMessages(options.messages);
 
   const listeners = new Set<Listener>();
+  const pendingStars = new Map<ThreadId, { starred: boolean; previous: Map<MessageId, boolean> }>();
   let cachedResult: { messages: readonly MailMessage[]; view: ViewState; feed: FeedResult } | undefined;
 
   function emit(): void {
@@ -124,6 +130,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
       partial.contextId !== undefined ||
       partial.channel !== undefined ||
       partial.sentOnly !== undefined ||
+      partial.starredOnly !== undefined ||
       partial.query !== undefined
     ) {
       view.selectionPinned = false;
@@ -145,7 +152,8 @@ export function createAppStore(options: AppStoreOptions = {}) {
       channel: snapshot.view.channel,
       sentOnly: snapshot.view.sentOnly,
       query: snapshot.view.query,
-      unreadOnly: snapshot.view.unreadOnly
+      unreadOnly: snapshot.view.unreadOnly,
+      starredOnly: snapshot.view.starredOnly
     });
     cachedResult = { messages: snapshot.messages, view: snapshot.view, feed: result };
     return result;
@@ -172,7 +180,11 @@ export function createAppStore(options: AppStoreOptions = {}) {
   function upsertMessages(messages: readonly MailMessage[]): void {
     if (messages.length === 0) return;
     const index = new Map<MessageId, MailMessage>(snapshot.messages.map((message) => [message.id, message]));
-    for (const message of messages) index.set(message.id, message);
+    for (const message of messages) {
+      const pending = pendingStars.get(groupingKey(message));
+      if (pending && !pending.previous.has(message.id)) pending.previous.set(message.id, message.isStarred);
+      index.set(message.id, pending === undefined ? message : { ...message, isStarred: pending.starred });
+    }
     patch({ messages: sortMessages(Array.from(index.values())) });
     ensureSelection();
   }
@@ -195,12 +207,12 @@ export function createAppStore(options: AppStoreOptions = {}) {
 
   const actions = {
     setContext(contextId: ContextFilter): void {
-      setView({ contextId });
+      setView({ contextId, starredOnly: false });
       ensureSelection();
     },
 
     setChannel(channel: ChannelFilter): void {
-      setView({ channel, sentOnly: false });
+      setView({ channel, sentOnly: false, ...(channel === 'chat' ? { starredOnly: false } : {}) });
       ensureSelection();
     },
 
@@ -216,6 +228,11 @@ export function createAppStore(options: AppStoreOptions = {}) {
 
     setUnreadOnly(unreadOnly: boolean): void {
       setView({ unreadOnly });
+      ensureSelection();
+    },
+
+    setStarredOnly(starredOnly: boolean): void {
+      setView({ starredOnly, ...(starredOnly ? { contextId: ALL_CONTEXTS, channel: 'email' as const, sentOnly: false } : {}) });
       ensureSelection();
     },
 
@@ -283,8 +300,27 @@ export function createAppStore(options: AppStoreOptions = {}) {
       void onMarkMessagesRead?.(affected, isRead);
     },
 
-    toggleStar(messageId: MessageId): void {
-      patchMessagesById([messageId], (message) => ({ ...message, isStarred: !message.isStarred }));
+    async toggleThreadStar(threadId: ThreadId): Promise<void> {
+      if (pendingStars.has(threadId)) return;
+      const affected = snapshot.messages.filter((message) => message.channel === 'email' && groupingKey(message) === threadId);
+      const first = affected[0];
+      if (!first || first.channel !== 'email') return;
+      const starred = !affected.some((message) => message.isStarred);
+      const previous = new Map(affected.map((message) => [message.id, message.isStarred]));
+      pendingStars.set(threadId, { starred, previous });
+      patch({ ui: { ...snapshot.ui, pendingStarThreadIds: [...snapshot.ui.pendingStarThreadIds, threadId] } });
+      patchMessagesById(previous.keys(), (message) => ({ ...message, isStarred: starred }));
+      try {
+        await options.onSetThreadStarred?.(first, starred);
+      } catch (error) {
+        pendingStars.delete(threadId);
+        patchMessagesById(previous.keys(), (message) => ({ ...message, isStarred: previous.get(message.id) ?? message.isStarred }));
+        const detail = error instanceof Error ? error.message : 'Erro desconhecido.';
+        patch({ sync: { ...snapshot.sync, lastError: `Não foi possível atualizar favoritos: ${detail}` } });
+      } finally {
+        pendingStars.delete(threadId);
+        patch({ ui: { ...snapshot.ui, pendingStarThreadIds: snapshot.ui.pendingStarThreadIds.filter((id) => id !== threadId) } });
+      }
     },
 
     archiveThread(threadId: ThreadId): void {

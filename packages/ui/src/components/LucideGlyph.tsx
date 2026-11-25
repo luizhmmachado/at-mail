@@ -62,9 +62,10 @@ export interface GlyphProps {
   size?: number;
   color: string;
   strokeWidth?: number;
+  fill?: string;
 }
 
-export function Glyph({ name, size = 18, color, strokeWidth = 1.5 }: GlyphProps): ReactElement {
+export function Glyph({ name, size = 18, color, strokeWidth = 1.5, fill = 'none' }: GlyphProps): ReactElement {
   const Icon = icons[name];
-  return <Icon size={size} color={color} strokeWidth={strokeWidth} />;
+  return <Icon size={size} color={color} strokeWidth={strokeWidth} fill={fill} />;
 }

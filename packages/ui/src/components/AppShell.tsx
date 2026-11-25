@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
-import type { AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
+import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
+import type { Account, AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -18,6 +18,9 @@ export interface AppShellProps {
   appIcon?: ImageSourcePropType;
   onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[], formatted?: boolean) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
+  onLoadChatImage?: (accountId: string, attachmentName: string) => Promise<string>;
+  onReconnectAccount?: (account: Account) => Promise<void>;
+  reconnectError?: string;
   onAddAccount?: () => void;
   onMoveAccounts?: (accountIds: AccountId[], contextId: ContextId) => Promise<void>;
   onRemoveAccount?: (accountId: AccountId) => Promise<void>;
@@ -25,16 +28,16 @@ export interface AppShellProps {
   onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
 }
 
-export function AppShell({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
+export function AppShell({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
+      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
+function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -67,7 +70,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts,
       <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
         <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
           {showReader ? (
-              <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} onSend={onSend} onReactChat={onReactChat} />
+              <ReaderPane thread={selectedThread} onBack={() => setMobilePane('list')} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} />
           ) : (
             <>
               <View style={{ flex: 1 }}>
@@ -85,6 +88,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts,
           )}
         </View>
         <SyncStatus mobile />
+        <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
         <CommandPalette mobile />
         <SettingsModal
           visible={settingsOpen}
@@ -121,10 +125,11 @@ function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts,
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>
-        <ReaderPane thread={selectedThread} onSend={onSend} onReactChat={onReactChat} />
+        <ReaderPane thread={selectedThread} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} />
       </View>
 
       <SyncStatus />
+      <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
       <CommandPalette />
       <SettingsModal
         visible={settingsOpen}
@@ -149,7 +154,8 @@ function ShellBody({ appIcon, onSend, onReactChat, onAddAccount, onMoveAccounts,
 function SyncStatus({ mobile = false }: { mobile?: boolean }): ReactElement | null {
   const theme = useTheme();
   const { sync, accounts } = useMailSnapshot();
-  const error = accounts.find((account) => account.lastError)?.lastError ?? sync.lastError;
+  const error = accounts.find((account) => account.status !== 'reauth-required' && account.lastError)?.lastError
+    ?? (sync.lastError === 'A autorização da conta Google expirou. Faça login novamente.' ? undefined : sync.lastError);
   if (sync.status !== 'syncing' && !error) return null;
 
   return (
@@ -179,6 +185,42 @@ function SyncStatus({ mobile = false }: { mobile?: boolean }): ReactElement | nu
         {error ? `Falha na sincronização: ${error}` : 'Atualizando…'}
       </Text>
     </View>
+  );
+}
+
+function ReconnectAccount({ onReconnectAccount, reconnectError }: Pick<AppShellProps, 'onReconnectAccount' | 'reconnectError'>): ReactElement {
+  const theme = useTheme();
+  const { accounts } = useMailSnapshot();
+  const account = accounts.find((item) => item.status === 'reauth-required' && (item.provider === 'gmail' || item.provider === 'google-chat'));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const reconnect = async (): Promise<void> => {
+    if (!account || !onReconnectAccount || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await onReconnectAccount(account);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível reconectar a conta.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal visible={account !== undefined && onReconnectAccount !== undefined} transparent animationType="fade" onRequestClose={() => {}}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: theme.space[4] }}>
+        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, backgroundColor: theme.colors.surface, borderRadius: theme.radius.lg, padding: theme.space[6], gap: theme.space[3] }}>
+          <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>Reconecte sua conta Google</Text>
+          <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
+            A sessão de {account?.email} expirou ou a senha pode ter sido alterada. Faça login novamente para continuar sincronizando.
+          </Text>
+          {(error || reconnectError) && <Text accessibilityRole="alert" style={{ ...typeStyle(theme, 'body'), color: theme.colors.danger }}>{error ?? reconnectError}</Text>}
+          <Pressable accessibilityRole="button" disabled={busy} onPress={() => void reconnect()} style={{ backgroundColor: theme.colors.accent, borderRadius: theme.radius.lg, padding: theme.space[3], alignItems: 'center', opacity: busy ? 0.6 : 1 }}>
+            <Text style={{ ...typeStyle(theme, 'button'), color: '#ffffff' }}>{busy ? 'Aguardando login…' : 'Fazer login novamente com o Google'}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 

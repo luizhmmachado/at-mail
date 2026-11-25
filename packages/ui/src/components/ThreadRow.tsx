@@ -8,7 +8,7 @@ import {
   type UnifiedThread
 } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
-import { useMailSnapshot } from '../store/MailStoreProvider';
+import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
 import { Glyph } from './LucideGlyph';
 
@@ -38,6 +38,7 @@ export function ThreadRow({
 }: ThreadRowProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
+  const actions = useMailActions();
   const [hovered, setHovered] = useState(false);
   const mobile = variant === 'mobile';
 
@@ -64,6 +65,7 @@ export function ThreadRow({
   const metaRole = mobile ? 'rowMetaMobile' : 'rowMeta';
 
   return (
+    <View style={{ height: mobile ? theme.layout.mobileRowHeight : theme.layout.rowHeight }}>
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${unread ? 'Não lida. ' : ''}${primaryLabel}. ${secondaryLabel}`}
@@ -153,6 +155,7 @@ export function ThreadRow({
               {context.name}
             </Text>
           )}
+          {thread.channel === 'email' && <View style={{ width: 20, marginLeft: theme.space[2] }} />}
           {unread && (
             <View
               accessibilityLabel="Não lida"
@@ -195,5 +198,23 @@ export function ThreadRow({
         />
       )}
     </Pressable>
+    {thread.channel === 'email' && (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+        accessibilityState={{ disabled: snapshot.ui.pendingStarThreadIds.includes(thread.id) }}
+        disabled={snapshot.ui.pendingStarThreadIds.includes(thread.id)}
+        onPress={() => void actions.toggleThreadStar(thread.id)}
+        style={{
+          position: 'absolute',
+          top: mobile ? 35 : 29,
+          right: (mobile ? theme.layout.mobilePaddingX : theme.layout.rowPaddingX) + (unread ? 13 : 0),
+          padding: 3
+        }}
+      >
+        <Glyph name="star" size={14} color={thread.flags.isStarred ? theme.colors.accent : theme.colors.textSecondary} fill={thread.flags.isStarred ? theme.colors.accent : 'none'} />
+      </Pressable>
+    )}
+    </View>
   );
 }

@@ -1,4 +1,4 @@
-class SyncError extends Error {
+export class SyncError extends Error {
   constructor(message: string, readonly kind: 'auth' | 'rate-limit' | 'network' | 'provider' | 'unknown' = 'unknown') { super(message); }
 }
 
@@ -27,7 +27,9 @@ export async function refreshAccessToken(refreshToken: string, clientId: string,
   const body = new URLSearchParams({ refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret, grant_type: 'refresh_token' });
   const response = await fetch(TOKEN_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
   const json = await response.json() as { access_token?: string; error?: string };
-  if (!response.ok || !json.access_token) throw new SyncError(`refresh Google: ${json.error ?? response.status}`, 'auth');
+  if (!response.ok || !json.access_token) {
+    throw new SyncError(`refresh Google: ${json.error ?? response.status}`, json.error === 'invalid_grant' || response.status === 401 ? 'auth' : 'provider');
+  }
   return json.access_token;
 }
 

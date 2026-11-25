@@ -13,10 +13,10 @@ import type { NewMessageAttachment, NewMessageSubmission } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission } from './src/notifications';
-import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken } from './src/auth';
+import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken, setGoogleAuthRevokedHandler } from './src/auth';
 import { restoreThemePreference } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
-import { addChatReaction, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
+import { addChatReaction, loadChatImage, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
 import { brand, isChatMessage } from '@mail/core';
 import type { Account, AccountId, ChatMessage, ContextId, MessageId, UnifiedThread } from '@mail/core';
@@ -43,7 +43,8 @@ function createLocalChatMessage(
   isDirectMessage: boolean,
   body: string,
   receivedAt: number,
-  threadName?: string
+  threadName?: string,
+  attachments: NewMessageAttachment[] = []
 ): ChatMessage {
   const senderName = account.displayName.trim() || account.email;
   return {
@@ -64,7 +65,13 @@ function createLocalChatMessage(
     senderName,
     isDirectMessage,
     ...(threadName ? { threadName, isThreadReply: true } : {}),
-    reactions: []
+    reactions: [],
+    attachments: attachments.map((attachment, index) => ({
+      id: `local:${index}`,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      ...(attachment.mimeType.startsWith('image/') ? { thumbnailUrl: `data:${attachment.mimeType};base64,${attachment.base64}` } : {})
+    }))
   };
 }
 
@@ -124,12 +131,12 @@ export default function App() {
       const account = store.accountFor(last.accountId);
       if (!account) throw new Error('A conta desta conversa não está disponível.');
       const optimisticName = nextOptimisticMessageName();
-      const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now(), chatThreadName);
+      const optimisticMessage = createLocalChatMessage(account, optimisticName, last.spaceId, last.spaceName, last.isDirectMessage, body, Date.now(), chatThreadName, attachments);
       store.actions.upsertMessages([optimisticMessage]);
       try {
         const receipt = await sendChatReply(last.accountId, last.spaceId, chatThreadName, body, attachments);
         if (receipt !== undefined) {
-          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt, chatThreadName)]);
+          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, last.spaceName, last.isDirectMessage, body, receipt.receivedAt, chatThreadName, attachments)]);
           store.actions.removeMessages([optimisticMessage.id]);
         } else {
           reconcileLegacySend(last.accountId, optimisticMessage.id);
@@ -208,12 +215,12 @@ export default function App() {
       if (!account) throw new Error('A conta desta conversa não está disponível.');
       const optimisticName = nextOptimisticMessageName();
       const optimisticSpaceName = `spaces/pending-${Date.now()}-${optimisticMessageSequence}`;
-      const optimisticMessage = createLocalChatMessage(account, optimisticName, optimisticSpaceName, recipient, true, message.body, Date.now());
+      const optimisticMessage = createLocalChatMessage(account, optimisticName, optimisticSpaceName, recipient, true, message.body, Date.now(), undefined, message.attachments);
       store.actions.upsertMessages([optimisticMessage]);
       try {
         const receipt = await sendChatMessage(message.accountId, recipient, message.body, message.attachments);
         if (receipt !== undefined) {
-          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt)]);
+          store.actions.upsertMessages([createLocalChatMessage(account, receipt.messageName, receipt.spaceResourceName, recipient, true, message.body, receipt.receivedAt, undefined, message.attachments)]);
           store.actions.removeMessages([optimisticMessage.id]);
           void syncEngine.syncSpace(account.id, receipt.spaceResourceName);
         } else {
@@ -240,6 +247,21 @@ export default function App() {
       setAuthError(messageOf(error, 'Falha ao adicionar a conta'));
     }
   }
+
+  async function reconnectAccount(account: Account): Promise<void> {
+    setAuthError(undefined);
+    const state = await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add', account);
+    await awaitGoogleLogin(state);
+    await activateSession();
+  }
+
+  useEffect(() => {
+    setGoogleAuthRevokedHandler((accountId) => {
+      const account = store.accountFor(brand.account(accountId));
+      if (account) store.actions.registerAccount({ ...account, status: 'reauth-required', lastError: 'A autorização da conta Google expirou. Faça login novamente.' });
+    });
+    return () => setGoogleAuthRevokedHandler(undefined);
+  }, []);
 
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -282,8 +304,8 @@ export default function App() {
             await awaitGoogleLogin(pending, { timeoutMs: 8000 });
             await activateSession();
             return;
-          } catch {
-            // Sem code pendente: segue para a tela de login.
+          } catch (error) {
+            setAuthError(messageOf(error, 'Não foi possível concluir o login.'));
           }
         }
         if ((await sessionToken()) !== null) {
@@ -372,7 +394,10 @@ export default function App() {
                 appIcon={require('./assets/icon.png')}
                 onSend={handleSend}
                 onReactChat={handleReactChat}
+                onLoadChatImage={loadChatImage}
                 onAddAccount={() => void beginAddAccount()}
+                onReconnectAccount={reconnectAccount}
+                reconnectError={authError}
                 onMoveAccounts={moveAccountsToContext}
                 onRemoveAccount={removeConnectedAccount}
                 onSetAccountNotifications={setNotificationsForAccount}

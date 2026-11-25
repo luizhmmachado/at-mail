@@ -4,7 +4,7 @@ const brand = { message: (value: string) => value, account: (value: string) => v
 import { randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { decrypt } from './crypto.js';
-import { refreshAccessToken } from './google.js';
+import { refreshAccessToken, SyncError } from './google.js';
 import type { SyncConfig } from './config.js';
 
 interface Credential { encrypted_refresh_token: string; email: string }
@@ -17,8 +17,40 @@ export interface GmailAttachmentPayload {
 
 async function accessToken(db: Db, config: SyncConfig, userId: string, accountId: string): Promise<string> {
   const row = (await db.query<Credential>('SELECT encrypted_refresh_token, email FROM atmail_credentials WHERE account_id = $1 AND user_id = $2', [accountId, userId])).rows[0];
-  if (!row) throw new Error('conta Google não conectada');
+  if (!row) throw new SyncError('conta Google não conectada', 'auth');
   return refreshAccessToken(decrypt(row.encrypted_refresh_token, config.encryptionKey), config.clientId, config.clientSecret);
+}
+
+export async function fetchChatImage(db: Db, config: SyncConfig, userId: string, accountId: string, attachmentName: string): Promise<{ mimeType: string; base64: string }> {
+  const token = await accessToken(db, config, userId, accountId);
+  const attachment = await googleJson(`https://chat.googleapis.com/v1/${attachmentName}`, token) as { contentType?: string; attachmentDataRef?: { resourceName?: string } };
+  const mimeType = attachment.contentType?.toLowerCase();
+  const resourceName = attachment.attachmentDataRef?.resourceName;
+  if (!mimeType || !/^image\/(?:png|jpeg|gif|webp|bmp|avif)$/.test(mimeType) || !resourceName) throw new Error('Imagem do Chat indisponível.');
+  const path = resourceName.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(`https://chat.googleapis.com/v1/media/${path}?alt=media`, { headers: { authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    const error = new Error(`Google media: ${response.status}`);
+    (error as Error & { status?: number }).status = response.status;
+    throw error;
+  }
+  const maxBytes = 8 * 1024 * 1024;
+  if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('Imagem excede o limite de visualização.');
+  if (!response.body) throw new Error('Imagem do Chat indisponível.');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('Imagem excede o limite de visualização.');
+    }
+    chunks.push(value);
+  }
+  return { mimeType, base64: Buffer.concat(chunks).toString('base64') };
 }
 
 async function googleJson(url: string, token: string): Promise<any> {
@@ -45,6 +77,22 @@ async function googleJsonRequest(url: string, token: string, init: RequestInit):
 
 function providerMessageId(id: string): string {
   return id.slice(id.lastIndexOf(':') + 1);
+}
+
+export async function setGmailThreadStarred(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  threadId: string,
+  isStarred: boolean
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  await googleJsonRequest(
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}/modify`,
+    token,
+    { method: 'POST', body: JSON.stringify(isStarred ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] }) }
+  );
 }
 
 export async function markGmailMessagesRead(
@@ -454,7 +502,7 @@ export function gmailMessagesUrl(): string {
 export function gmailHistoryUrl(startHistoryId: string, pageToken?: string): string {
   const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
   url.searchParams.set('startHistoryId', startHistoryId);
-  url.searchParams.set('historyTypes', 'messageAdded');
+  for (const type of ['messageAdded', 'labelAdded', 'labelRemoved']) url.searchParams.append('historyTypes', type);
   if (pageToken) url.searchParams.set('pageToken', pageToken);
   return url.toString();
 }
@@ -464,6 +512,10 @@ export function gmailAddedMessageIds(history: any): string[] {
   for (const record of history.history ?? []) {
     for (const addition of record.messagesAdded ?? []) {
       const id = addition.message?.id;
+      if (typeof id === 'string') ids.add(id);
+    }
+    for (const change of [...(record.labelsAdded ?? []), ...(record.labelsRemoved ?? [])]) {
+      const id = change.message?.id;
       if (typeof id === 'string') ids.add(id);
     }
   }
@@ -520,8 +572,21 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
   }
 
   if (messageIds === undefined) {
+    const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
+    nextCursor = typeof profile.historyId === 'string' ? profile.historyId : '';
     const list = await googleJson(gmailMessagesUrl(), token);
-    messageIds = (list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string');
+    const ids = new Set<string>((list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string'));
+    let pageToken: string | undefined;
+    do {
+      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+      url.searchParams.set('q', 'is:starred');
+      url.searchParams.set('maxResults', '500');
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      const starred = await googleJson(url.toString(), token);
+      for (const item of starred.messages ?? []) if (typeof item.id === 'string') ids.add(item.id);
+      pageToken = starred.nextPageToken;
+    } while (pageToken);
+    messageIds = [...ids];
   }
 
   const messages = await mapWithConcurrency(messageIds ?? [], 8, async (id) => {
@@ -535,14 +600,9 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     const labels: string[] = message.labelIds ?? [];
     const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
     const bodies = extractGmailBodies(payload);
-    nextCursor = newerHistoryId(nextCursor, message.historyId);
     return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
   });
 
-  if (nextCursor.length === 0) {
-    const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
-    nextCursor = typeof profile.historyId === 'string' ? profile.historyId : '';
-  }
   return { messages, cursor: nextCursor, removedIds: [] };
 }
 

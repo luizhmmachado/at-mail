@@ -185,6 +185,42 @@ describe('sync por canal', () => {
     assert.equal(store.getSnapshot().messages.length, seed.messages.length);
   });
 
+  it('pausa apenas a conta com autorização revogada até ser reconectada', async () => {
+    const seed = createSeedData(NOW);
+    const account = seed.accounts[0]!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    let calls = 0;
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: account.provider, channel: account.channel,
+      async fetchSince() {
+        calls += 1;
+        throw new SyncError('autorização revogada', 'auth');
+      }
+    }] });
+    await engine.syncAll();
+    assert.equal(store.accountFor(account.id)?.status, 'reauth-required');
+    await engine.syncAll();
+    assert.equal(calls, 1);
+  });
+
+  it('não restaura a conta quando uma consulta simultânea termina após a revogação', async () => {
+    const seed = createSeedData(NOW);
+    const account = seed.accounts.find((item) => item.channel === 'chat')!;
+    const store = createAppStore({ accounts: [account], contexts: seed.contexts });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const engine = new SyncEngine({ store, adapters: [{
+      provider: account.provider, channel: account.channel,
+      async fetchSince() { throw new SyncError('autorização revogada', 'auth'); },
+      async fetchSpace() { await blocked; return { messages: [], removedIds: [] }; }
+    }] });
+    const focused = engine.syncSpace(account.id, 'spaces/open');
+    await engine.syncAccount(account.id);
+    release();
+    await focused;
+    assert.equal(store.accountFor(account.id)?.status, 'reauth-required');
+  });
+
   it('notifica apenas mensagens novas após o sync inicial', async () => {
     const seed = createSeedData(NOW);
     const emailAccount = seed.accounts.find((account) => account.channel === 'email');
@@ -395,6 +431,58 @@ describe('navegação e seleção', () => {
 
     store.actions.setChannel('chat');
     assert.equal(store.getSnapshot().view.sentOnly, false);
+  });
+});
+
+describe('favoritos', () => {
+  it('atualiza a conversa imediatamente, preserva a escolha durante sync e impede requisições simultâneas', async () => {
+    const seed = createSeedData(NOW);
+    const messages = seed.messages.map((message) => ({ ...message, isStarred: false }));
+    let finish!: () => void;
+    let calls = 0;
+    const wait = new Promise<void>((resolve) => { finish = resolve; });
+    const store = createAppStore({ messages, onSetThreadStarred: async (_message, value) => {
+      assert.equal(value, true);
+      calls += 1;
+      await wait;
+    } });
+    const thread = store.getFeed().threads.find((item) => item.channel === 'email')!;
+    const original = messages.find((message) => message.id === thread.messageIds[0])!;
+    const request = store.actions.toggleThreadStar(thread.id);
+    assert.equal(store.getThread(thread.id)?.flags.isStarred, true);
+    assert.ok(store.getSnapshot().ui.pendingStarThreadIds.includes(thread.id));
+    store.actions.upsertMessages([original]);
+    assert.equal(store.getThread(thread.id)?.flags.isStarred, true);
+    await store.actions.toggleThreadStar(thread.id);
+    assert.equal(calls, 1);
+    finish();
+    await request;
+    assert.equal(store.getThread(thread.id)?.flags.isStarred, true);
+    assert.equal(store.getSnapshot().ui.pendingStarThreadIds.length, 0);
+  });
+
+  it('reverte a alteração e apresenta erro quando o provedor falha', async () => {
+    const seed = createSeedData(NOW);
+    const messages = seed.messages.map((message) => ({ ...message, isStarred: false }));
+    const store = createAppStore({ messages, onSetThreadStarred: async () => { throw new Error('Rede indisponível'); } });
+    const thread = store.getFeed().threads.find((item) => item.channel === 'email')!;
+    await store.actions.toggleThreadStar(thread.id);
+    assert.equal(store.getThread(thread.id)?.flags.isStarred, false);
+    assert.match(store.getSnapshot().sync.lastError ?? '', /Rede indisponível/);
+    assert.equal(store.getSnapshot().ui.pendingStarThreadIds.length, 0);
+  });
+
+  it('filtra somente e-mails favoritos, incluindo arquivados, e restaura a navegação por contexto', () => {
+    const seed = createSeedData(NOW);
+    const email = seed.messages.find((message) => message.channel === 'email')!;
+    assert.equal(email.channel, 'email');
+    const chat = seed.messages.find((message) => message.channel === 'chat')!;
+    const store = createAppStore({ messages: [{ ...email, folder: 'archived', isStarred: true }, { ...chat, isStarred: true }] });
+    store.actions.setStarredOnly(true);
+    assert.equal(store.getFeed().threads.length, 1);
+    assert.equal(store.getFeed().threads[0]?.channel, 'email');
+    store.actions.setContext('all');
+    assert.equal(store.getSnapshot().view.starredOnly, false);
   });
 });
 

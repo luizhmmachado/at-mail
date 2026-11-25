@@ -8,6 +8,7 @@ const TOKEN_KEY = 'atmail.session.token';
 const STATE_KEY = 'atmail.oauth.state';
 const VERIFIER_KEY = 'atmail.oauth.verifier';
 const MODE_KEY = 'atmail.oauth.mode';
+const ACCOUNT_KEY = 'atmail.oauth.account';
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 
 export type LoginMode = 'login' | 'add';
@@ -107,13 +108,15 @@ async function startLogin(codeChallengeValue: string): Promise<string> {
  * Abre o consentimento do Google no navegador e devolve o `state` do login.
  * Use {@link awaitGoogleLogin} em seguida para esperar a conclusão.
  */
-export async function beginGoogleLogin(clientId: string, scopes: readonly string[], mode: LoginMode = 'login'): Promise<string> {
+export async function beginGoogleLogin(clientId: string, scopes: readonly string[], mode: LoginMode = 'login', account?: Pick<Account, 'id' | 'email'>): Promise<string> {
   if (clientId.length === 0) throw new Error('Client ID do Google não configurado nesta build.');
   const verifier = await randomHex(32);
   const state = await startLogin(codeChallenge(verifier));
   await storageSet(STATE_KEY, state);
   await storageSet(VERIFIER_KEY, verifier);
   await storageSet(MODE_KEY, mode);
+  if (account) await storageSet(ACCOUNT_KEY, account.id);
+  else await storageDelete(ACCOUNT_KEY);
   const query = queryString([
     ['client_id', clientId],
     ['redirect_uri', redirectUri()],
@@ -123,7 +126,8 @@ export async function beginGoogleLogin(clientId: string, scopes: readonly string
     ['access_type', 'offline'],
     ['prompt', 'consent'],
     ['code_challenge', codeChallenge(verifier)],
-    ['code_challenge_method', 'S256']
+    ['code_challenge_method', 'S256'],
+    ...(account ? [['login_hint', account.email] as const] : [])
   ]);
   await openExternal(`${GOOGLE_AUTH_URL}?${query}`);
   return state;
@@ -137,6 +141,13 @@ export interface GoogleLoginOptions {
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 1500;
 
+async function clearPendingLogin(): Promise<void> {
+  await storageDelete(STATE_KEY);
+  await storageDelete(VERIFIER_KEY);
+  await storageDelete(ACCOUNT_KEY);
+  await storageSet(MODE_KEY, 'login');
+}
+
 /** Espera o navegador concluir o consentimento e troca o `code` por uma sessão. */
 export async function awaitGoogleLogin(state: string, options: GoogleLoginOptions = {}): Promise<void> {
   const interval = options.intervalMs ?? POLL_INTERVAL_MS;
@@ -149,7 +160,10 @@ export async function awaitGoogleLogin(state: string, options: GoogleLoginOption
     });
     if (response.ok) {
       const result = (await response.json()) as { code?: string; error?: string };
-      if (typeof result.error === 'string' && result.error.length > 0) throw new Error(describeOAuthError(result.error));
+      if (typeof result.error === 'string' && result.error.length > 0) {
+        await clearPendingLogin();
+        throw new Error(describeOAuthError(result.error));
+      }
       if (typeof result.code === 'string' && result.code.length > 0) {
         await exchangeGoogleCode(state, result.code);
         return;
@@ -167,21 +181,24 @@ async function exchangeGoogleCode(state: string, code: string): Promise<void> {
   const payload = JSON.stringify({
     state,
     code,
-    codeVerifier: (await storageGet(VERIFIER_KEY)) ?? undefined
+    codeVerifier: (await storageGet(VERIFIER_KEY)) ?? undefined,
+    accountId: (await storageGet(ACCOUNT_KEY)) ?? undefined
   });
   const path = mode === 'add' ? '/auth/google/add' : '/auth/google/exchange';
   const response = mode === 'add'
     ? await apiFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: payload })
     : await fetch(`${SYNC_API_URL}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: payload });
-  if (!response.ok) throw new Error((await response.text()).slice(0, 240));
+  if (!response.ok) {
+    const result = await response.json().catch(() => undefined) as { error?: string } | undefined;
+    await clearPendingLogin();
+    throw new Error(result?.error ?? `Não foi possível concluir o login (${response.status}).`);
+  }
   const result = (await response.json()) as { sessionToken?: string };
   if (mode !== 'add') {
     if (!result.sessionToken) throw new Error('o servidor não devolveu uma sessão');
     await storageSet(TOKEN_KEY, result.sessionToken);
   }
-  await storageDelete(STATE_KEY);
-  await storageDelete(VERIFIER_KEY);
-  await storageSet(MODE_KEY, 'login');
+  await clearPendingLogin();
 }
 
 /** Encerra a sessão no servidor e descarta o token local. */
@@ -193,11 +210,25 @@ export async function signOut(): Promise<void> {
   }
 }
 
+let onGoogleAuthRevoked: ((accountId: string) => void) | undefined;
+
+export function setGoogleAuthRevokedHandler(handler: ((accountId: string) => void) | undefined): void {
+  onGoogleAuthRevoked = handler;
+}
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await sessionToken();
   const headers = new Headers(init.headers);
   if (token) headers.set('authorization', `Bearer ${token}`);
-  return fetch(`${SYNC_API_URL}${path}`, { ...init, headers, credentials: 'include' });
+  const response = await fetch(`${SYNC_API_URL}${path}`, { ...init, headers, credentials: 'include' });
+  if (response.status === 401 && typeof init.body === 'string') {
+    const result = await response.clone().json().catch(() => undefined) as { errorCode?: string } | undefined;
+    if (result?.errorCode === 'GOOGLE_AUTH_REVOKED') {
+      const request = JSON.parse(init.body) as { accountId?: unknown };
+      if (typeof request.accountId === 'string') onGoogleAuthRevoked?.(request.accountId);
+    }
+  }
+  return response;
 }
 
 export async function fetchAccounts(): Promise<Account[]> {

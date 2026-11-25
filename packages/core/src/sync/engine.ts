@@ -201,6 +201,7 @@ export class SyncEngine {
   ): void {
     const account = this.store.accountFor(accountId);
     if (account === undefined) return;
+    if (account.status === 'reauth-required' && patch.status !== 'reauth-required') return;
     this.store.actions.registerAccount({
       ...account,
       ...patch,

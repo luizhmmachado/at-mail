@@ -56,6 +56,15 @@ export interface EmailAttachmentPayload {
   base64: string;
 }
 
+export async function setThreadStarred(message: EmailMessage, isStarred: boolean): Promise<void> {
+  const response = await apiFetch('/messages/star', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId: message.accountId, threadId: message.providerThreadId, isStarred })
+  });
+  if (!response.ok) throw new Error(await messageResponseError(response));
+}
+
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
   const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
   const chatMessages = messages.filter((message): message is ChatMessage => message.channel === 'chat');
@@ -137,6 +146,17 @@ export async function addChatReaction(accountId: string, messageId: string, emoj
   if (!response.ok) throw new Error(await messageResponseError(response));
 }
 
+export async function loadChatImage(accountId: string, attachmentName: string): Promise<string> {
+  const response = await apiFetch('/messages/chat-image', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, attachmentName })
+  });
+  if (!response.ok) throw new Error(await messageResponseError(response));
+  const image = await response.json() as { mimeType: string; base64: string };
+  return `data:${image.mimeType};base64,${image.base64}`;
+}
+
 async function messageResponseError(response: Response): Promise<string> {
   const result = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
   return typeof result?.error === 'string' ? result.error : `Não foi possível completar a operação (${response.status}).`;
@@ -180,7 +200,13 @@ export async function requestSync(provider: string, request: SyncRequest): Promi
   });
 
   if (!response.ok) {
+    const error = response.status === 401
+      ? await response.clone().json().catch(() => undefined) as { errorCode?: string } | undefined
+      : undefined;
     const detail = await response.text().catch(() => '');
+    if (error?.errorCode === 'GOOGLE_AUTH_REVOKED') {
+      throw new SyncError('A autorização da conta Google expirou. Faça login novamente.', 'auth');
+    }
     const message = `sync ${provider} falhou (${response.status}): ${detail.slice(0, 200)}`;
     if (provider === 'google-chat' && request.cursor && response.status === 400) throw new SyncError(message, 'cursor');
     throw new Error(message);

@@ -45,7 +45,9 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
 
   const mobile = fullScreen;
   const title =
-    snapshot.view.contextId === 'all'
+    snapshot.view.starredOnly
+      ? 'Favoritos'
+      : snapshot.view.contextId === 'all'
       ? 'Todas as caixas'
       : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'Todas as caixas');
 
@@ -243,9 +245,18 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
             <ContextOption
               label="Todas as caixas"
               accent={theme.colors.accent}
-              selected={snapshot.view.contextId === 'all'}
+              selected={snapshot.view.contextId === 'all' && !snapshot.view.starredOnly}
               onPress={() => {
                 actions.setContext('all');
+                setMenuOpen(false);
+              }}
+            />
+            <ContextOption
+              label="Favoritos"
+              accent={theme.colors.accent}
+              selected={snapshot.view.starredOnly}
+              onPress={() => {
+                actions.setStarredOnly(true);
                 setMenuOpen(false);
               }}
             />

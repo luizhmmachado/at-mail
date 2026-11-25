@@ -72,10 +72,9 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
         case 'star': {
           if (threadId === undefined) break;
           const thread = store.getThread(threadId);
-          const firstMessage = thread?.messageIds[0];
-          if (firstMessage !== undefined) {
+          if (thread?.channel === 'email') {
             event.preventDefault();
-            store.actions.toggleStar(firstMessage);
+            void store.actions.toggleThreadStar(thread.id);
           }
           break;
         }

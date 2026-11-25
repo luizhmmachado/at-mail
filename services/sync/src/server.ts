@@ -3,9 +3,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SyncConfig } from './config.js';
 import { decrypt, encrypt, hashToken, matchesPkceChallenge, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
-import { exchangeCode, getUser, revokeToken } from './google.js';
+import { exchangeCode, getUser, revokeToken, SyncError } from './google.js';
 import { body, cors, html, json, PayloadTooLargeError } from './http.js';
-import { createChatReaction, fetchChat, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, type GmailAttachmentPayload } from './providers.js';
+import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault, type VaultRecord } from './vault.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
@@ -138,11 +138,26 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         if (!userId) return json(res, 401, { error: 'não autenticado' }, headers);
         if (req.method === 'POST' && (url.pathname === '/auth/google/add' || url.pathname === '/api/auth/google/add')) {
           const input = await body(req);
+          const state = String(input.state ?? '').trim().slice(0, 128);
           const code = String(input.code ?? '').trim();
           const codeVerifier = String(input.codeVerifier ?? '').trim();
-          if (code.length === 0 || codeVerifier.length === 0) return json(res, 400, { error: 'code e code_verifier são obrigatórios' }, headers);
+          const targetAccountId = typeof input.accountId === 'string' ? input.accountId : undefined;
+          if (!state || !code || !/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)) return json(res, 400, { error: 'state, code e code_verifier são obrigatórios' }, headers);
+          const consumed = (await db.query<{ code_challenge: string }>(
+            'DELETE FROM atmail_oauth_pending WHERE state = $1 AND code = $2 AND created_at > $3 RETURNING code_challenge',
+            [state, code, Date.now() - PENDING_TTL_MS]
+          )).rows[0];
+          if (!consumed || !matchesPkceChallenge(codeVerifier, consumed.code_challenge)) return json(res, 400, { error: 'login inválido ou expirado' }, headers);
+          if (targetAccountId) {
+            const owned = (await db.query<{ id: string }>('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [targetAccountId, userId])).rows[0];
+            if (!owned) return json(res, 404, { error: 'conta não encontrada' }, headers);
+          }
           const exchanged = await exchangeCode({ code, codeVerifier: codeVerifier || undefined, redirectUri: config.redirectUri, clientId: config.clientId, clientSecret: config.clientSecret });
           const user = await getUser(exchanged.accessToken);
+          if (targetAccountId && targetAccountId !== `google:${user.sub}:gmail` && targetAccountId !== `google:${user.sub}:chat`) {
+            return json(res, 409, { error: 'Selecione a conta Google que precisa ser reconectada.' }, headers);
+          }
+          if (!exchanged.refreshToken) return json(res, 400, { error: 'O Google não forneceu autorização para sincronização. Tente novamente.' }, headers);
           const now = Date.now();
           const accountId = `google:${user.sub}:gmail`;
           const chatAccountId = `google:${user.sub}:chat`;
@@ -236,6 +251,18 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
             validated.push({ kind, id, updatedAt, deleted: record.deleted === true, payload: JSON.parse(payloadJson) });
           }
           return json(res, 200, await writeVault(db, userId, validated), headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/star' || url.pathname === '/api/messages/star')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const threadId = typeof input.threadId === 'string' ? input.threadId : '';
+          if (!/^[A-Za-z0-9_-]{1,128}$/.test(threadId) || typeof input.isStarred !== 'boolean') {
+            return json(res, 400, { error: 'conversa ou preferência inválida' }, headers);
+          }
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
+          await setGmailThreadStarred(db, config, userId, accountId, threadId, input.isStarred);
+          return json(res, 200, { updated: true }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/read' || url.pathname === '/api/messages/read')) {
           const input = await body(req);
@@ -353,6 +380,16 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           await createChatReaction(db, config, userId, accountId, { messageName, emoji, remove: input.remove === true });
           return json(res, 200, { reacted: true }, headers);
         }
+        if (req.method === 'POST' && (url.pathname === '/messages/chat-image' || url.pathname === '/api/messages/chat-image')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const attachmentName = String(input.attachmentName ?? '');
+          if (!/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+\/attachments\/[A-Za-z0-9._-]+$/.test(attachmentName)) return json(res, 400, { error: 'anexo inválido' }, headers);
+          const account = (await db.query<{ id: string }>('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
+          const image = await fetchChatImage(db, config, userId, accountId, attachmentName);
+          return json(res, 200, image, headers);
+        }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
         if (req.method === 'POST' && syncMatch) {
           const input = await body(req);
@@ -376,8 +413,8 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         if (error instanceof PayloadTooLargeError) return json(res, 413, { error: 'corpo da requisição muito grande' }, headers);
         if (error instanceof SyntaxError) return json(res, 400, { error: 'corpo JSON inválido' }, headers);
         if (error instanceof ConflictError) return json(res, 409, { error: error.message }, headers);
-        if (upstreamStatus === 403 && detail.toLowerCase().includes('insufficient authentication scopes')) {
-          return json(res, 403, { error: 'Permissões Google insuficientes. Adicione a conta novamente em Configurações para conceder os novos escopos de reação e leitura do Chat.' }, headers);
+        if ((error instanceof SyncError && error.kind === 'auth') || upstreamStatus === 401 || (upstreamStatus === 403 && /insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT|invalidCredentials|authError/i.test(detail))) {
+          return json(res, 401, { error: 'A autorização da conta Google expirou. Faça login novamente.', errorCode: 'GOOGLE_AUTH_REVOKED' }, headers);
         }
         if (upstreamStatus === 404 && detail.includes('Google Chat app not found')) {
           return json(res, 409, { error: 'Não há um DM existente para este destinatário. Para criar um novo, habilite a API Chat e configure o app Chat no Google Cloud.' }, headers);

@@ -51,6 +51,7 @@ export interface FeedQuery {
   includeTrashed?: boolean;
   sentOnly?: boolean;
   unreadOnly?: boolean;
+  starredOnly?: boolean;
 }
 
 export interface FeedResult {
@@ -278,14 +279,15 @@ function isVisible(thread: UnifiedThread, query: FeedQuery): boolean {
   if (query.contextId !== 'all' && !thread.contextIds.includes(query.contextId)) return false;
   if (query.channel !== 'all' && thread.channel !== query.channel && thread.channel !== 'mixed') return false;
   if (query.unreadOnly === true && thread.unreadCount === 0) return false;
+  if (query.starredOnly === true && (thread.channel !== 'email' || !thread.flags.isStarred)) return false;
   if (query.query.trim().length > 0 && !matchesQuery(thread, query.query)) return false;
 
   if (query.sentOnly === true) {
     if (!thread.flags.hasSent) return false;
   } else {
     const isArchived = thread.emailFolder === ARCHIVED_FOLDER;
-    if (isArchived && query.includeArchived !== true) return false;
-    if (thread.emailFolder === 'sent' && query.includeSent !== true) return false;
+    if (isArchived && query.includeArchived !== true && query.starredOnly !== true) return false;
+    if (thread.emailFolder === 'sent' && query.includeSent !== true && query.starredOnly !== true) return false;
     if (thread.emailFolder === 'trash' && query.includeTrashed !== true) return false;
   }
 
