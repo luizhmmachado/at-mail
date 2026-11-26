@@ -16,4 +16,4 @@ jobs:
         run: |
           curl --fail --silent --show-error \
             -H "Authorization: Bearer $CRON_SECRET" \
-            https://at-mail.vercel.app/api/push/cron
+            https://at-mail-sync-legacy.vercel.app/push/cron
