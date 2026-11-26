@@ -483,7 +483,8 @@ function BulkSelectionPane(): ReactElement {
           <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancelar</Text>
         </Pressable>
       </View>
-      <View style={{ paddingHorizontal: theme.layout.readerGutter, paddingTop: 190 }}>
+      <View style={{ flex: 1, paddingHorizontal: theme.layout.readerGutter, justifyContent: 'center' }}>
+        <View style={{ maxWidth: 520 }}>
         <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Uma caixa de entrada mais leve.</Text>
         <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
           {selected.length === 0 ? 'Selecione um ou vários e-mails usando as caixas de seleção.' : `Aplique uma ação ${selected.length === 1 ? 'ao e-mail selecionado' : `aos ${selected.length} e-mails selecionados`}.`}
@@ -501,6 +502,10 @@ function BulkSelectionPane(): ReactElement {
             </View>
           </View>
         )}
+        <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginTop: theme.space[6] }}>
+          Selecione um ou vários e-mails usando as caixas de seleção.
+        </Text>
+        </View>
       </View>
     </View>
   );
