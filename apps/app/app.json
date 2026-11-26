@@ -3,7 +3,7 @@
     "name": "@mail",
     "slug": "at-mail",
     "scheme": "atmail",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "icon": "./assets/icon.png",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
@@ -14,7 +14,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.atmail.client",
-      "buildNumber": "22",
+      "buildNumber": "23",
       "icon": {
         "light": "./assets/icon.png",
         "dark": "./assets/icon-dark.png"
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "app.atmail.client",
-      "versionCode": 22,
+      "versionCode": 23,
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

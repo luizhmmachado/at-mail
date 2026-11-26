@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import {
   contextAccent,
@@ -47,7 +47,6 @@ export function ThreadRow({
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
-  const [hovered, setHovered] = useState(false);
   const mobile = variant === 'mobile';
 
   const primaryContextId: ContextId | undefined = thread.contextIds[0];
@@ -63,9 +62,7 @@ export function ThreadRow({
 
   const background = selected
     ? theme.colors.surfaceSelected
-    : hovered
-      ? theme.colors.surfaceHover
-      : theme.colors.surface;
+    : theme.colors.surface;
 
   const nameRole = mobile ? 'rowNameMobile' : 'rowName';
   const subjectRole = mobile ? 'rowSubjectMobile' : 'rowSubject';
@@ -79,8 +76,6 @@ export function ThreadRow({
       accessibilityLabel={`${unread ? 'Não lida. ' : ''}${primaryLabel}. ${secondaryLabel}`}
       onPress={selectionMode ? onToggleSelection : onPress}
       onLongPress={mobile ? onOpenActions : undefined}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
       style={{
         height: mobile ? theme.layout.mobileRowHeight : theme.layout.rowHeight,
         backgroundColor: background,
@@ -109,19 +104,28 @@ export function ThreadRow({
           style={{
             position: 'absolute',
             zIndex: 2,
-            left: mobile ? 13 : 11,
-            top: (mobile ? theme.layout.mobileRowHeight : theme.layout.rowHeight) / 2 - 9,
-            width: 18,
-            height: 18,
+            left: 0,
+            top: (mobile ? theme.layout.mobileRowHeight : theme.layout.rowHeight) / 2 - (mobile ? 24 : 16),
+            width: mobile ? 48 : 47,
+            height: mobile ? 48 : 32,
             alignItems: 'center',
-            justifyContent: 'center',
-            borderWidth: 1.5,
-            borderColor: selectedForAction ? theme.colors.accent : theme.colors.borderStrong,
-            borderRadius: 5,
-            backgroundColor: selectedForAction ? theme.colors.accent : 'transparent'
+            justifyContent: 'center'
           }}
         >
-          {selectedForAction && <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+          <View
+            style={{
+              width: mobile ? 18 : 14,
+              height: mobile ? 18 : 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: selectedForAction ? theme.colors.accent : theme.colors.borderStrong,
+              borderRadius: 4,
+              backgroundColor: selectedForAction ? theme.colors.accent : 'transparent'
+            }}
+          >
+            {selectedForAction && <Text style={{ color: '#ffffff', fontSize: mobile ? 12 : 10, fontWeight: '700' }}>✓</Text>}
+          </View>
         </Pressable>
       )}
 
@@ -134,7 +138,7 @@ export function ThreadRow({
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: contentInset - inset }} />
+          <View style={{ width: contentInset - inset + (selectionMode ? mobile ? 22 : 18 : 0) }} />
           {chatAvatarUrl !== undefined && (
             <Image
               accessibilityLabel={`Foto de ${threadParticipantsLabel(thread, 1)}`}
@@ -159,7 +163,7 @@ export function ThreadRow({
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: contentInset - inset }} />
+          <View style={{ width: contentInset - inset + (selectionMode ? mobile ? 22 : 18 : 0) }} />
           <View style={{ marginRight: mobile ? 7 : 7 }}>
             <Glyph
               name={thread.channel === 'chat' ? 'chat' : 'mail'}
@@ -205,7 +209,7 @@ export function ThreadRow({
         </View>
 
         <View style={{ flexDirection: 'row' }}>
-          <View style={{ width: contentInset - inset }} />
+          <View style={{ width: contentInset - inset + (selectionMode ? mobile ? 22 : 18 : 0) }} />
           <Text
             numberOfLines={1}
             style={{
@@ -261,38 +265,6 @@ export function ThreadRow({
         <Glyph name="star" size={14} color={thread.flags.isStarred ? theme.colors.accent : theme.colors.textSecondary} fill={thread.flags.isStarred ? theme.colors.accent : 'none'} />
       </Pressable>
     )}
-    {thread.channel === 'email' && !selectionMode && hovered && !mobile && (
-      <View
-        style={{
-          position: 'absolute',
-          top: 19,
-          right: 35,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 5,
-          paddingHorizontal: 5,
-          backgroundColor: background
-        }}
-      >
-        <RowAction label={unread ? 'Marcar como lida' : 'Marcar como não lida'} onPress={() => actions.markThreadRead(thread.id, unread)}>
-          <Glyph name="mail" size={14} color={theme.colors.textSecondary} />
-        </RowAction>
-        <RowAction label={thread.emailFolder === 'inbox' ? 'Arquivar' : 'Mover para a caixa de entrada'} onPress={() => thread.emailFolder === 'inbox' ? actions.archiveThread(thread.id) : actions.restoreThread(thread.id)}>
-          <Glyph name={thread.emailFolder === 'inbox' ? 'archive' : 'inbox'} size={14} color={theme.colors.textSecondary} />
-        </RowAction>
-        <RowAction label={thread.emailFolder === 'trash' ? 'Mover para a caixa de entrada' : 'Excluir'} onPress={() => thread.emailFolder === 'trash' ? actions.restoreThread(thread.id) : actions.trashThread(thread.id)}>
-          <Glyph name={thread.emailFolder === 'trash' ? 'inbox' : 'trash'} size={14} color={theme.colors.textSecondary} />
-        </RowAction>
-      </View>
-    )}
     </View>
-  );
-}
-
-function RowAction({ label, onPress, children }: { label: string; onPress: () => void; children: ReactElement }): ReactElement {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={(event) => { event.stopPropagation(); onPress(); }} style={{ width: 25, height: 25, alignItems: 'center', justifyContent: 'center' }}>
-      {children}
-    </Pressable>
   );
 }

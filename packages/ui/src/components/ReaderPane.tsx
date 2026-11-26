@@ -37,8 +37,6 @@ export interface ReaderPaneProps {
   onLoadChatImage?: (accountId: string, attachmentName: string) => Promise<string>;
 }
 
-const ACTION_TOOLTIP_DELAY_MS = 600;
-
 /**
  * Coluna de leitura de 1016 px do frame `@mail · Desktop`.
  * Barra de ações de 72 px, título de 28/45 com 38 px de respiro depois da barra,
@@ -189,10 +187,9 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             <IconButton
               name={isArchived || thread.emailFolder === 'trash' ? 'inbox' : 'archive'}
               label={isArchived ? 'Move to inbox' : thread.emailFolder === 'trash' ? 'Restore to inbox' : 'Archive'}
-              tooltip={!mobile}
               onPress={() => isArchived || thread.emailFolder === 'trash' ? actions.restoreThread(thread.id) : actions.archiveThread(thread.id)}
             />
-            {thread.emailFolder !== 'trash' && <IconButton name="trash" label="Excluir" tooltip={!mobile} onPress={() => actions.trashThread(thread.id)} />}
+            {thread.emailFolder !== 'trash' && <IconButton name="trash" label="Excluir" onPress={() => actions.trashThread(thread.id)} />}
             <View
               style={{
                 width: theme.border.hairline,
@@ -203,7 +200,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
           </>
         )}
 
-        <IconButton name="clock" label="Adiar e marcar como não lida" tooltip={!mobile} onPress={() => actions.markThreadRead(thread.id, false)} />
+        <IconButton name="clock" label="Adiar e marcar como não lida" onPress={() => actions.markThreadRead(thread.id, false)} />
 
         {canModifyEmail && (
           <IconButton
@@ -211,7 +208,6 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             label={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
             active={thread.flags.isStarred}
             disabled={snapshot.ui.pendingStarThreadIds.includes(thread.id)}
-            tooltip={!mobile}
             onPress={() => void actions.toggleThreadStar(thread.id)}
           />
         )}
@@ -223,8 +219,8 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             {position + 1} de {feed.threads.length}
           </Text>
         )}
-        <IconButton name="chevron-up" label="Conversa anterior" tooltip={!mobile} onPress={() => actions.moveSelection(-1)} />
-        <IconButton name="chevron-down" label="Próxima conversa" tooltip={!mobile} onPress={() => actions.moveSelection(1)} />
+        <IconButton name="chevron-up" label="Conversa anterior" onPress={() => actions.moveSelection(-1)} />
+        <IconButton name="chevron-down" label="Próxima conversa" onPress={() => actions.moveSelection(1)} />
       </View>
 
       {isChatThread && (
@@ -524,27 +520,16 @@ function IconButton({
   label,
   onPress,
   active = false,
-  disabled = false,
-  tooltip = false
+  disabled = false
 }: {
   name: GlyphName;
   label: string;
   onPress: () => void;
   active?: boolean;
   disabled?: boolean;
-  tooltip?: boolean;
 }): ReactElement {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  useEffect(() => {
-    if (!hovered || !tooltip || Platform.OS !== 'web') {
-      setTooltipVisible(false);
-      return;
-    }
-    const timeout = setTimeout(() => setTooltipVisible(true), ACTION_TOOLTIP_DELAY_MS);
-    return () => clearTimeout(timeout);
-  }, [hovered, tooltip]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -572,26 +557,6 @@ function IconButton({
         color={active ? theme.colors.accent : hovered ? theme.colors.textPrimary : theme.colors.textSecondary}
         fill={name === 'star' && active ? theme.colors.accent : 'none'}
       />
-      {tooltipVisible && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            top: 38,
-            ...(name === 'chevron-up' || name === 'chevron-down' ? { right: 0 } : { left: 0 }),
-            width: 190,
-            paddingHorizontal: theme.space[2],
-            paddingVertical: 6,
-            borderRadius: theme.radius.sm,
-            backgroundColor: theme.colors.textPrimary,
-            zIndex: 30
-          }}
-        >
-          <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.surface, textAlign: 'center' }}>
-            {label}
-          </Text>
-        </View>
-      )}
     </Pressable>
   );
 }
