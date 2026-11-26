@@ -37,6 +37,8 @@ export interface ReaderPaneProps {
   onLoadChatImage?: (accountId: string, attachmentName: string) => Promise<string>;
 }
 
+const ACTION_TOOLTIP_DELAY_MS = 600;
+
 /**
  * Coluna de leitura de 1016 px do frame `@mail · Desktop`.
  * Barra de ações de 72 px, título de 28/45 com 38 px de respiro depois da barra,
@@ -450,6 +452,15 @@ function IconButton({
 }): ReactElement {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  useEffect(() => {
+    if (!hovered || Platform.OS !== 'web') {
+      setTooltipVisible(false);
+      return;
+    }
+    const timeout = setTimeout(() => setTooltipVisible(true), ACTION_TOOLTIP_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [hovered]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -465,6 +476,7 @@ function IconButton({
         height: 32,
         alignItems: 'center',
         justifyContent: 'center',
+        position: 'relative',
         borderRadius: theme.radius.sm,
         backgroundColor: active ? theme.colors.accentMuted : hovered ? theme.colors.surfaceHover : 'transparent',
         opacity: disabled ? 0.5 : 1
@@ -476,6 +488,26 @@ function IconButton({
         color={active ? theme.colors.accent : hovered ? theme.colors.textPrimary : theme.colors.textSecondary}
         fill={name === 'star' && active ? theme.colors.accent : 'none'}
       />
+      {tooltipVisible && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 38,
+            ...(name === 'chevron-up' || name === 'chevron-down' ? { right: 0 } : { left: 0 }),
+            width: 190,
+            paddingHorizontal: theme.space[2],
+            paddingVertical: 6,
+            borderRadius: theme.radius.sm,
+            backgroundColor: theme.colors.textPrimary,
+            zIndex: 30
+          }}
+        >
+          <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.surface, textAlign: 'center' }}>
+            {label}
+          </Text>
+        </View>
+      )}
     </Pressable>
   );
 }
