@@ -76,6 +76,28 @@ describe('nome de espaços do Google Chat', () => {
       if (url.endsWith('/v1/media/media/token?alt=media')) return new Response(Buffer.from('imagem'));
       throw new Error(`URL não esperada: ${url}`);
     });
+
+    it('baixa imagem do Chat diretamente pela URL autorizada do anexo', async (t) => {
+      const { db, accounts, credentials } = createFakeDb();
+      accounts.set('chat-1', { userId: 'user-1', contextId: 'work', provider: 'google-chat', channel: 'chat' });
+      credentials.add('chat-1');
+      t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+        assert.equal(url, 'https://chat.googleapis.com/v1/media/spaces/s/attachments/a?alt=media');
+        assert.equal((init?.headers as Record<string, string>).authorization, 'Bearer test-token');
+        return new Response(Buffer.from('imagem'), { headers: { 'content-type': 'image/png' } });
+      });
+      const app = await createAppServer(config, db);
+      const response = await call(app, 'POST', '/messages/chat-image', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({
+        accountId: 'chat-1',
+        attachmentName: 'spaces/s/messages/m/attachments/a',
+        downloadUrl: 'https://chat.googleapis.com/v1/media/spaces/s/attachments/a?alt=media'
+      }));
+      assert.equal(response.status, 200);
+      assert.deepEqual(JSON.parse(response.body), { mimeType: 'image/png', base64: Buffer.from('imagem').toString('base64') });
+      await app.close();
+    });
     const app = await createAppServer(config, db);
     const send = (accountId: string, attachmentName: string) => call(app, 'POST', '/messages/chat-image', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId, attachmentName }));
     assert.equal((await send('other', 'spaces/s/messages/m/attachments/a')).status, 404);
@@ -355,18 +377,22 @@ describe('sincronização do Gmail', () => {
       paths.push(url.pathname);
       if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
       if (url.pathname.endsWith('/profile')) return Response.json({ historyId: '100' });
-      if (url.pathname.endsWith('/messages')) {
-        if (url.searchParams.get('q') !== 'is:starred') return Response.json({ messages: [{ id: 'recent' }] });
-        return Response.json(url.searchParams.get('pageToken')
+      if (url.pathname.endsWith('/messages')) return Response.json(
+        url.searchParams.get('pageToken')
           ? { messages: [{ id: 'old-2' }] }
-          : { messages: [{ id: 'old-1' }, { id: 'recent' }], nextPageToken: 'next' });
-      }
+          : { messages: [{ id: 'recent' }, { id: 'old-1' }], nextPageToken: 'next' }
+      );
       const id = url.pathname.split('/').pop();
       return Response.json({ id, threadId: id, historyId: '105', labelIds: ['STARRED'], payload: { headers: [] } });
     });
-    const result = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work');
-    assert.deepEqual(result.messages.map((message) => message.id), ['gmail:gmail-1:recent', 'gmail:gmail-1:old-1', 'gmail:gmail-1:old-2']);
-    assert.equal(result.cursor, '100');
+    const first = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work');
+    assert.deepEqual(first.messages.map((message) => message.id), ['gmail:gmail-1:recent', 'gmail:gmail-1:old-1']);
+    assert.equal(first.hasMore, true);
+    assert.match(first.cursor, /^gmail-page:/);
+    const second = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work', first.cursor);
+    assert.deepEqual(second.messages.map((message) => message.id), ['gmail:gmail-1:old-2']);
+    assert.equal(second.hasMore, false);
+    assert.equal(second.cursor, '100');
     assert.ok(paths.indexOf('/gmail/v1/users/me/profile') < paths.indexOf('/gmail/v1/users/me/messages'));
   });
 
@@ -395,7 +421,8 @@ describe('sincronização do Gmail', () => {
   it('sempre consulta as mensagens mais recentes sem reaproveitar pageToken', () => {
     const url = new URL(gmailMessagesUrl());
 
-    assert.equal(url.searchParams.get('maxResults'), '50');
+    assert.equal(url.searchParams.get('maxResults'), '100');
+    assert.equal(url.searchParams.get('includeSpamTrash'), 'true');
     assert.equal(url.searchParams.has('pageToken'), false);
   });
 

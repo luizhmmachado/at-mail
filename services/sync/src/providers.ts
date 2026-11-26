@@ -21,14 +21,25 @@ async function accessToken(db: Db, config: SyncConfig, userId: string, accountId
   return refreshAccessToken(decrypt(row.encrypted_refresh_token, config.encryptionKey), config.clientId, config.clientSecret);
 }
 
-export async function fetchChatImage(db: Db, config: SyncConfig, userId: string, accountId: string, attachmentName: string): Promise<{ mimeType: string; base64: string }> {
+export async function fetchChatImage(db: Db, config: SyncConfig, userId: string, accountId: string, attachmentName: string, downloadUrl?: string): Promise<{ mimeType: string; base64: string }> {
   const token = await accessToken(db, config, userId, accountId);
-  const attachment = await googleJson(`https://chat.googleapis.com/v1/${attachmentName}`, token) as { contentType?: string; attachmentDataRef?: { resourceName?: string } };
-  const mimeType = attachment.contentType?.toLowerCase();
-  const resourceName = attachment.attachmentDataRef?.resourceName;
-  if (!mimeType || !/^image\/(?:png|jpeg|gif|webp|bmp|avif)$/.test(mimeType) || !resourceName) throw new Error('Imagem do Chat indisponível.');
-  const path = resourceName.split('/').map(encodeURIComponent).join('/');
-  const response = await fetch(`https://chat.googleapis.com/v1/media/${path}?alt=media`, { headers: { authorization: `Bearer ${token}` } });
+  let mimeType: string | undefined;
+  let mediaUrl: string;
+  if (downloadUrl) {
+    const url = new URL(downloadUrl);
+    if (url.protocol !== 'https:' || url.hostname !== 'chat.googleapis.com' || !url.pathname.startsWith('/v1/media/')) {
+      throw new Error('URL da imagem do Chat inválida.');
+    }
+    mediaUrl = url.toString();
+  } else {
+    const attachment = await googleJson(`https://chat.googleapis.com/v1/${attachmentName}`, token) as { contentType?: string; attachmentDataRef?: { resourceName?: string } };
+    mimeType = attachment.contentType?.toLowerCase();
+    const resourceName = attachment.attachmentDataRef?.resourceName;
+    if (!resourceName) throw new Error('Imagem do Chat indisponível.');
+    const path = resourceName.split('/').map(encodeURIComponent).join('/');
+    mediaUrl = `https://chat.googleapis.com/v1/media/${path}?alt=media`;
+  }
+  const response = await fetch(mediaUrl, { headers: { authorization: `Bearer ${token}` } });
   if (!response.ok) {
     const error = new Error(`Google media: ${response.status}`);
     (error as Error & { status?: number }).status = response.status;
@@ -50,6 +61,8 @@ export async function fetchChatImage(db: Db, config: SyncConfig, userId: string,
     }
     chunks.push(value);
   }
+  mimeType ??= response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  if (!mimeType || !/^image\/(?:png|jpeg|gif|webp|bmp|avif)$/.test(mimeType)) throw new Error('Imagem do Chat indisponível.');
   return { mimeType, base64: Buffer.concat(chunks).toString('base64') };
 }
 
@@ -516,8 +529,14 @@ function decodeCodePoint(value: number): string {
   return value <= 0x10ffff ? String.fromCodePoint(value) : '\uFFFD';
 }
 
-export function gmailMessagesUrl(): string {
-  return 'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50';
+const GMAIL_PAGE_CURSOR_PREFIX = 'gmail-page:';
+
+export function gmailMessagesUrl(pageToken?: string): string {
+  const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+  url.searchParams.set('maxResults', '100');
+  url.searchParams.set('includeSpamTrash', 'true');
+  if (pageToken) url.searchParams.set('pageToken', pageToken);
+  return url.toString();
 }
 
 export function gmailHistoryUrl(startHistoryId: string, pageToken?: string): string {
@@ -568,12 +587,33 @@ async function mapWithConcurrency<T, R>(values: readonly T[], concurrency: numbe
   return results;
 }
 
-export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[] }> {
+function parseGmailPageCursor(cursor: string): { historyId: string; pageToken: string } | undefined {
+  if (!cursor.startsWith(GMAIL_PAGE_CURSOR_PREFIX)) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor.slice(GMAIL_PAGE_CURSOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+    if (!Array.isArray(parsed) || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') return undefined;
+    return { historyId: parsed[0], pageToken: parsed[1] };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[]; hasMore: boolean; historyReset: boolean }> {
   const token = await accessToken(db, config, userId, accountId);
   let messageIds: string[] | undefined;
   let nextCursor = '';
+  let hasMore = false;
+  let historyReset = false;
+  const pageCursor = cursor ? parseGmailPageCursor(cursor) : undefined;
 
-  if (cursor) {
+  if (pageCursor) {
+    const list = await googleJson(gmailMessagesUrl(pageCursor.pageToken), token);
+    messageIds = (list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string');
+    nextCursor = list.nextPageToken
+      ? `${GMAIL_PAGE_CURSOR_PREFIX}${Buffer.from(JSON.stringify([pageCursor.historyId, list.nextPageToken])).toString('base64url')}`
+      : pageCursor.historyId;
+    hasMore = typeof list.nextPageToken === 'string' && list.nextPageToken.length > 0;
+  } else if (cursor) {
     try {
       const addedIds = new Set<string>();
       let pageToken: string | undefined;
@@ -584,29 +624,25 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
         pageToken = history.nextPageToken;
       } while (pageToken);
       messageIds = [...addedIds];
-      if (messageIds.length === 0) return { messages: [], cursor: nextCursor || cursor, removedIds: [] };
+      if (messageIds.length === 0) return { messages: [], cursor: nextCursor || cursor, removedIds: [], hasMore: false, historyReset: false };
     } catch (error) {
       if ((error as Error & { status?: number }).status !== 404) throw error;
       messageIds = undefined;
       nextCursor = '';
+      historyReset = true;
     }
   }
 
   if (messageIds === undefined) {
+    historyReset = true;
     const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
     nextCursor = typeof profile.historyId === 'string' ? profile.historyId : '';
     const list = await googleJson(gmailMessagesUrl(), token);
     const ids = new Set<string>((list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string'));
-    let pageToken: string | undefined;
-    do {
-      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-      url.searchParams.set('q', 'is:starred');
-      url.searchParams.set('maxResults', '500');
-      if (pageToken) url.searchParams.set('pageToken', pageToken);
-      const starred = await googleJson(url.toString(), token);
-      for (const item of starred.messages ?? []) if (typeof item.id === 'string') ids.add(item.id);
-      pageToken = starred.nextPageToken;
-    } while (pageToken);
+    if (typeof list.nextPageToken === 'string' && list.nextPageToken.length > 0) {
+      nextCursor = `${GMAIL_PAGE_CURSOR_PREFIX}${Buffer.from(JSON.stringify([nextCursor, list.nextPageToken])).toString('base64url')}`;
+      hasMore = true;
+    }
     messageIds = [...ids];
   }
 
@@ -624,7 +660,7 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
   });
 
-  return { messages, cursor: nextCursor, removedIds: [] };
+  return { messages, cursor: nextCursor, removedIds: [], hasMore, historyReset };
 }
 
 export function resolveChatSpaceName(

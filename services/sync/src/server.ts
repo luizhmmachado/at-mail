@@ -128,10 +128,11 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const exchanged = await exchangeCode({ code, codeVerifier, redirectUri: config.redirectUri, clientId: config.clientId, clientSecret: config.clientSecret });
           const user = await getUser(exchanged.accessToken);
           if (user.email_verified === false) return json(res, 403, { error: 'a conta Google não tem e-mail verificado' }, headers);
+          if (!exchanged.refreshToken) return json(res, 400, { error: 'O Google não forneceu autorização para sincronização. Tente novamente.' }, headers);
           const now = Date.now();
           const accountId = `google:${user.sub}:gmail`;
           const chatAccountId = `google:${user.sub}:chat`;
-          const encryptedRefresh = encrypt(exchanged.refreshToken ?? '', config.encryptionKey);
+          const encryptedRefresh = encrypt(exchanged.refreshToken, config.encryptionKey);
           await db.transaction(async (client) => {
             await client.query('INSERT INTO atmail_users (id, email, name, picture, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(id) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture', [user.sub, user.email, user.name ?? '', user.picture ?? '', now]);
             await client.query('INSERT INTO atmail_credentials (account_id, user_id, provider, email, encrypted_refresh_token, scopes, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(account_id) DO UPDATE SET encrypted_refresh_token=excluded.encrypted_refresh_token, scopes=excluded.scopes, updated_at=excluded.updated_at WHERE atmail_credentials.user_id = excluded.user_id', [accountId, user.sub, 'gmail', user.email, encryptedRefresh, exchanged.scope, now]);
@@ -432,7 +433,8 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           if (!/^spaces\/[A-Za-z0-9._-]+\/messages\/[A-Za-z0-9._-]+\/attachments\/[A-Za-z0-9._-]+$/.test(attachmentName)) return json(res, 400, { error: 'anexo inválido' }, headers);
           const account = (await db.query<{ id: string }>('SELECT id FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account) return json(res, 404, { error: 'conta não encontrada' }, headers);
-          const image = await fetchChatImage(db, config, userId, accountId, attachmentName);
+          const downloadUrl = typeof input.downloadUrl === 'string' ? input.downloadUrl : undefined;
+          const image = await fetchChatImage(db, config, userId, accountId, attachmentName, downloadUrl);
           return json(res, 200, image, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);

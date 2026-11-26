@@ -244,7 +244,7 @@ export function ThreadRow({
         style={{ position: 'absolute', right: theme.layout.mobilePaddingX, top: 42, minHeight: 28, justifyContent: 'center' }}
       >
         <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>
-          {thread.emailFolder === 'trash' ? 'Restore' : 'Move to inbox'}
+          {thread.emailFolder === 'trash' ? 'Restaurar' : 'Mover para a caixa de entrada'}
         </Text>
       </Pressable>
     )}

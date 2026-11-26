@@ -11,8 +11,7 @@ export interface ChannelTabsProps {
 }
 
 const TABS: { id: ChannelFilter; label: string }[] = [
-  { id: 'all', label: 'Unified' },
-  { id: 'email', label: 'Email' },
+  { id: 'email', label: 'E-mail' },
   { id: 'chat', label: 'Chat' }
 ];
 
@@ -56,7 +55,7 @@ export function ChannelTabs({ feed, variant = 'desktop' }: ChannelTabsProps): Re
             key={tab.id}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            accessibilityLabel={`${tab.label}${unread > 0 ? `, ${unread} unread` : ''}`}
+            accessibilityLabel={`${tab.label}${unread > 0 ? `, ${unread} não lidas` : ''}`}
             onPress={() => actions.setChannel(tab.id)}
             style={{
               flex: 1,

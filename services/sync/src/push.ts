@@ -53,9 +53,25 @@ async function pollAccount(db: Db, config: SyncConfig, account: PushAccount): Pr
   let messages: MailMessage[];
   let cursor = state.cursor ?? '';
   if (account.provider === 'gmail') {
-    const page = await fetchGmail(db, config, account.user_id, account.id, account.context_id, state.initialized ? cursor : undefined);
-    messages = page.messages;
-    cursor = page.cursor;
+    messages = [];
+    let gmailCursor = state.initialized ? cursor : undefined;
+    let gmailReset = !state.initialized;
+    do {
+      const page = await fetchGmail(db, config, account.user_id, account.id, account.context_id, gmailCursor);
+      messages.push(...page.messages);
+      gmailCursor = page.cursor;
+      cursor = page.cursor;
+      gmailReset ||= page.historyReset;
+      if (!page.hasMore) break;
+    } while (true);
+    if (!state.initialized || gmailReset) {
+      await db.query(
+        'INSERT INTO atmail_push_sync_state (account_id, user_id, provider, channel, cursor, initialized, updated_at) VALUES ($1, $2, $3, $4, $5, TRUE, $6) ON CONFLICT(account_id) DO UPDATE SET cursor = excluded.cursor, initialized = TRUE, updated_at = excluded.updated_at',
+        [account.id, account.user_id, account.provider, account.channel, cursor, Date.now()]
+      );
+      await rememberMessages(db, account, messages.filter((message) => !message.isRead));
+      return 0;
+    }
   } else {
     messages = [];
     let chatCursor: string | undefined;

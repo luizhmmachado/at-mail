@@ -47,14 +47,14 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
   const mobile = fullScreen;
   const title =
     snapshot.view.emailFolder === 'archived'
-      ? 'Archived'
+      ? 'Arquivados'
       : snapshot.view.emailFolder === 'trash'
-      ? 'Trash'
+      ? 'Lixeira'
       : snapshot.view.starredOnly
-      ? 'Favorites'
+      ? 'Favoritos'
       : snapshot.view.contextId === 'all'
-      ? 'All Inboxes'
-      : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'All Inboxes');
+      ? 'Todas as caixas'
+      : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'Todas as caixas');
   const selectionMode = snapshot.ui.selectingThreads;
   const selectedCount = snapshot.ui.selectedThreadIds.length;
 
@@ -88,7 +88,7 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                 color: theme.colors.textPrimary
               }}
             >
-              {mobile && selectionMode ? `${selectedCount} selected` : title}
+              {mobile && selectionMode ? `${selectedCount} selecionados` : title}
             </Text>
             {!selectionMode && <Glyph name="chevron-down" size={mobile ? 20 : 18} color={theme.colors.textSecondary} />}
           </Pressable>
@@ -97,13 +97,13 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
 
           {selectionMode && mobile && (
             <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection} style={{ position: 'relative', zIndex: 2 }}>
-              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Clear</Text>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Limpar</Text>
             </Pressable>
           )}
 
           {!selectionMode && snapshot.view.channel !== 'chat' && mobile && (
             <Pressable accessibilityRole="button" accessibilityLabel="Selecionar e-mails" onPress={() => actions.setSelectingThreads(true)} style={{ position: 'relative', zIndex: 2 }}>
-              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Select</Text>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar</Text>
             </Pressable>
           )}
 
@@ -205,29 +205,32 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                 }}
               >
                 {selectionMode
-                  ? mobile ? 'Tap emails to select' : `${selectedCount} selected`
-                  : mobile && section === sections[0] ? 'Hold an email for actions' : section.title}
+                  ? mobile ? 'Toque nos e-mails para selecionar' : `${selectedCount} selecionados`
+                  : mobile && section === sections[0] ? 'Segure um e-mail para abrir as ações' : section.title}
               </Text>
               {unread > 0 && !selectionMode && (
                 <Text style={{ ...typeStyle(theme, 'sectionMeta'), color: theme.colors.textSecondary }}>
-                  {unread} unread
+                  {unread} não {unread === 1 ? 'lida' : 'lidas'}
                 </Text>
               )}
               {selectionMode && section === sections[0] && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[3] }}>
                   {mobile && (
-                    <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Emails only</Text>
+                    <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Somente e-mails</Text>
                   )}
+                  <Pressable accessibilityRole="button" accessibilityLabel="Selecionar todos os e-mails" onPress={actions.selectAllThreads}>
+                    <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar todos</Text>
+                  </Pressable>
                   {!mobile && (
                     <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
-                      <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Clear</Text>
+                      <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Limpar</Text>
                     </Pressable>
                   )}
                 </View>
               )}
               {!selectionMode && section === sections[0] && !mobile && snapshot.view.channel !== 'chat' && (
                 <Pressable accessibilityRole="button" onPress={() => actions.setSelectingThreads(true)}>
-                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Select emails</Text>
+                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar e-mails</Text>
                 </Pressable>
               )}
             </View>
@@ -261,12 +264,12 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
               <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: theme.space[2] }}>
                 {actionThread.participants[0]?.name ?? 'E-mail'}
               </Text>
-              <ActionSheetButton label={actionThread.unreadCount > 0 ? 'Mark as read' : 'Mark as unread'} onPress={() => { actions.markThreadRead(actionThread.id, actionThread.unreadCount > 0); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.flags.isStarred ? 'Remove from favorites' : 'Add to favorites'} onPress={() => { void actions.toggleThreadStar(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.emailFolder === 'inbox' ? 'Archive email' : 'Move to inbox'} onPress={() => { actionThread.emailFolder === 'inbox' ? actions.archiveThread(actionThread.id) : actions.restoreThread(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.emailFolder === 'trash' ? 'Move to inbox' : 'Move to trash'} danger={actionThread.emailFolder !== 'trash'} onPress={() => { actionThread.emailFolder === 'trash' ? actions.restoreThread(actionThread.id) : actions.trashThread(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label="Select email" onPress={() => { actions.toggleThreadSelection(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label="Cancel" onPress={() => setActionThread(undefined)} />
+              <ActionSheetButton label={actionThread.unreadCount > 0 ? 'Marcar como lido' : 'Marcar como não lido'} onPress={() => { actions.markThreadRead(actionThread.id, actionThread.unreadCount > 0); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} onPress={() => { void actions.toggleThreadStar(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'inbox' ? 'Arquivar e-mail' : 'Mover para a caixa de entrada'} onPress={() => { actionThread.emailFolder === 'inbox' ? actions.archiveThread(actionThread.id) : actions.restoreThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'trash' ? 'Mover para a caixa de entrada' : 'Mover para a lixeira'} danger={actionThread.emailFolder !== 'trash'} onPress={() => { actionThread.emailFolder === 'trash' ? actions.restoreThread(actionThread.id) : actions.trashThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Selecionar e-mail" onPress={() => { actions.toggleThreadSelection(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Cancelar" onPress={() => setActionThread(undefined)} />
             </Pressable>
           </Pressable>
         )}
@@ -339,9 +342,9 @@ function FolderTabs(): ReactElement {
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const folders = [
-    ['inbox', 'Inbox'],
-    ['archived', 'Archived'],
-    ['trash', 'Trash']
+    ['inbox', 'Caixa de entrada'],
+    ['archived', 'Arquivados'],
+    ['trash', 'Lixeira']
   ] as const;
   return (
     <View accessibilityRole="tablist" style={{ flexDirection: 'row', height: 38, marginTop: 6, borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
@@ -385,14 +388,14 @@ function BulkActionBar(): ReactElement {
   return (
     <View style={{ paddingHorizontal: theme.space[3], paddingTop: theme.space[2], paddingBottom: theme.space[1], borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.borderSubtle, backgroundColor: theme.colors.surface }}>
       <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: 4 }}>
-        Apply to {count} {count === 1 ? 'email' : 'emails'}
+        Aplicar a {count} {count === 1 ? 'e-mail' : 'e-mails'}
       </Text>
       <View style={{ flexDirection: 'row' }}>
-        <BulkAction label="Mark read" onPress={() => apply('read')} />
-        <BulkAction label="Mark unread" onPress={() => apply('unread')} />
-        <BulkAction label="Favorite" onPress={() => apply('favorite')} />
-        <BulkAction label="Archive" onPress={() => apply('archive')} />
-        <BulkAction label="Delete" danger onPress={() => apply('trash')} />
+        <BulkAction label="Marcar lido" onPress={() => apply('read')} />
+        <BulkAction label="Marcar não lido" onPress={() => apply('unread')} />
+        <BulkAction label="Favorito" onPress={() => apply('favorite')} />
+        <BulkAction label="Arquivar" onPress={() => apply('archive')} />
+        <BulkAction label="Excluir" danger onPress={() => apply('trash')} />
       </View>
     </View>
   );
@@ -463,7 +466,7 @@ function EmptyState({ query, loading }: { query: string; loading: boolean }): Re
     <View style={{ padding: theme.space[6], gap: theme.space[2] }}>
       {loading && <ActivityIndicator accessibilityLabel="Carregando mensagens" color={theme.colors.accent} />}
       <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
-        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado'         : 'Inbox clear'}
+        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado' : 'Caixa de entrada livre'}
       </Text>
       <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
         {loading

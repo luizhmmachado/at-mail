@@ -163,11 +163,11 @@ export async function addChatReaction(accountId: string, messageId: string, emoj
   if (!response.ok) throw new Error(await messageResponseError(response));
 }
 
-export async function loadChatImage(accountId: string, attachmentName: string): Promise<string> {
+export async function loadChatImage(accountId: string, attachmentName: string, downloadUrl?: string): Promise<string> {
   const response = await apiFetch('/messages/chat-image', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, attachmentName })
+    body: JSON.stringify({ accountId, attachmentName, ...(downloadUrl ? { downloadUrl } : {}) })
   });
   if (!response.ok) throw new Error(await messageResponseError(response));
   const image = await response.json() as { mimeType: string; base64: string };

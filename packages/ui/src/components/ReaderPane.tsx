@@ -34,7 +34,7 @@ export interface ReaderPaneProps {
   onBack?: () => void;
   onSend?: (thread: UnifiedThread, body: string, chatThreadName?: string, attachments?: NewMessageAttachment[], formatted?: boolean) => Promise<void>;
   onReactChat?: (message: ChatMessage, emoji: string) => Promise<void>;
-  onLoadChatImage?: (accountId: string, attachmentName: string) => Promise<string>;
+  onLoadChatImage?: (accountId: string, attachmentName: string, downloadUrl?: string) => Promise<string>;
 }
 
 /**
@@ -186,7 +186,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
           <>
             <IconButton
               name={isArchived || thread.emailFolder === 'trash' ? 'inbox' : 'archive'}
-              label={isArchived ? 'Move to inbox' : thread.emailFolder === 'trash' ? 'Restore to inbox' : 'Archive'}
+              label={isArchived ? 'Mover para a caixa de entrada' : thread.emailFolder === 'trash' ? 'Restaurar para a caixa de entrada' : 'Arquivar'}
               onPress={() => isArchived || thread.emailFolder === 'trash' ? actions.restoreThread(thread.id) : actions.archiveThread(thread.id)}
             />
             {thread.emailFolder !== 'trash' && <IconButton name="trash" label="Excluir" onPress={() => actions.trashThread(thread.id)} />}
@@ -477,27 +477,27 @@ function BulkSelectionPane(): ReactElement {
     <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <View style={{ height: theme.layout.headerHeight, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space[8], borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
         <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textPrimary }}>
-          {selected.length} {selected.length === 1 ? 'email selected' : 'emails selected'}
+          {selected.length} {selected.length === 1 ? 'e-mail selecionado' : 'e-mails selecionados'}
         </Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
-          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancel</Text>
+          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancelar</Text>
         </Pressable>
       </View>
-      <View style={{ padding: theme.space[8], alignItems: 'center' }}>
-        <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>A little less inbox.</Text>
+      <View style={{ paddingHorizontal: theme.layout.readerGutter, paddingTop: 190 }}>
+        <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Uma caixa de entrada mais leve.</Text>
         <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
-          {selected.length === 0 ? 'Select one email or several using the checkboxes.' : `Apply an action to the ${selected.length === 1 ? 'selected email' : `${selected.length} selected emails`}.`}
+          {selected.length === 0 ? 'Selecione um ou vários e-mails usando as caixas de seleção.' : `Aplique uma ação ${selected.length === 1 ? 'ao e-mail selecionado' : `aos ${selected.length} e-mails selecionados`}.`}
         </Text>
         {selected.length > 0 && (
           <View style={{ width: '100%', maxWidth: 520, marginTop: theme.space[8], gap: theme.space[3] }}>
             <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
-              <BulkPaneAction label="Mark read" onPress={() => apply('read')} />
-              <BulkPaneAction label="Mark unread" onPress={() => apply('unread')} />
+              <BulkPaneAction label="Marcar como lidos" onPress={() => apply('read')} />
+              <BulkPaneAction label="Marcar como não lidos" onPress={() => apply('unread')} />
             </View>
             <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
-              <BulkPaneAction label="Favorite" onPress={() => apply('favorite')} />
-              <BulkPaneAction label="Archive" onPress={() => apply('archive')} />
-              <BulkPaneAction label="Move to trash" danger onPress={() => apply('trash')} />
+              <BulkPaneAction label="Adicionar aos favoritos" onPress={() => apply('favorite')} />
+              <BulkPaneAction label="Arquivar" onPress={() => apply('archive')} />
+              <BulkPaneAction label="Mover para a lixeira" danger onPress={() => apply('trash')} />
             </View>
           </View>
         )}
@@ -835,7 +835,7 @@ function ChatAttachment({ accountId, attachment, onLoadChatImage }: { accountId:
     setLoading(true);
     setFailed(false);
     const request = onLoadChatImage && attachment.id.startsWith('spaces/')
-      ? onLoadChatImage(accountId, attachment.id)
+      ? onLoadChatImage(accountId, attachment.id, attachment.downloadUrl)
       : Promise.resolve(attachment.thumbnailUrl ?? attachment.downloadUrl);
     void request.catch((error) => {
       console.error('Não foi possível carregar a imagem do Chat.', error);
