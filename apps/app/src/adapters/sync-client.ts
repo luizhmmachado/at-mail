@@ -12,6 +12,7 @@ export interface SyncEnvelopeDto {
   hasMore?: boolean;
   removedIds?: string[];
   requiresReauth?: boolean;
+  olderCursor?: string;
 }
 
 export interface RawMessageDto {
@@ -47,6 +48,7 @@ export interface SyncRequest {
   cursor?: string;
   spaceId?: string;
   limit?: number;
+  olderCursor?: string;
 }
 
 export interface EmailAttachmentPayload {
@@ -221,6 +223,9 @@ export async function requestSync(provider: string, request: SyncRequest): Promi
       ? await response.clone().json().catch(() => undefined) as { errorCode?: string } | undefined
       : undefined;
     const detail = await response.text().catch(() => '');
+    if (response.status === 429 || (response.status >= 500 && detail.includes('rateLimit'))) {
+      throw new SyncError('A sincronização está temporariamente limitada pelo Google. Tente novamente em instantes.', 'rate-limit');
+    }
     if (error?.errorCode === 'GOOGLE_AUTH_REVOKED') {
       throw new SyncError('A autorização da conta Google expirou. Faça login novamente.', 'auth');
     }
@@ -240,6 +245,7 @@ export function toSyncPage(envelope: SyncEnvelopeDto, accountId: string): SyncPa
   };
   if (envelope.cursor !== undefined) page.nextCursor = envelope.cursor;
   if (envelope.hasMore === true) page.hasMore = true;
+  if (envelope.olderCursor !== undefined) page.olderCursor = envelope.olderCursor;
   if (envelope.requiresReauth === true) page.requiresReauth = true;
   return page;
 }
@@ -301,6 +307,10 @@ export function createHttpAdapter(provider: string, channel: 'email' | 'chat'): 
       });
       return toSyncPage(envelope, account.id);
     },
+    fetchOlder: channel === 'email' ? async (account, olderCursor) => {
+      const envelope = await requestSync(provider, { accountId: account.id, olderCursor });
+      return toSyncPage(envelope, account.id);
+    } : undefined,
     fetchSpace: channel === 'chat' ? async (account, spaceId) => {
       const envelope = await requestSync(provider, { accountId: account.id, spaceId });
       return toSyncPage(envelope, account.id);

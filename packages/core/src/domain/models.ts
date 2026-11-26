@@ -20,6 +20,7 @@ export interface Account {
   notificationsEnabled?: boolean;
   /** Cursor incremental do provedor (historyId, deltaLink, UIDVALIDITY+UID). */
   syncCursor?: string;
+  olderSyncCursor?: string;
   lastSyncedAt?: number;
   lastError?: string;
   secretRef: SecretRef;

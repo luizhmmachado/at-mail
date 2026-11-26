@@ -26,18 +26,19 @@ export interface AppShellProps {
   onRemoveAccount?: (accountId: AccountId) => Promise<void>;
   onSetAccountNotifications?: (accountId: AccountId, enabled: boolean) => Promise<void>;
   onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
+  onLoadOlderEmails?: () => Promise<void>;
 }
 
-export function AppShell({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps = {}): ReactElement {
+export function AppShell({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} />
+      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} onLoadOlderEmails={onLoadOlderEmails} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage }: AppShellProps): ReactElement {
+function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -105,6 +106,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
                   onOpenSettings={() => setSettingsOpen(true)}
                   appIcon={appIcon}
                   fullScreen
+                  onLoadOlder={onLoadOlderEmails}
                 />
               </View>
               <MobileNav active={snapshot.view.channel} onCompose={openNewMessage} />
@@ -145,7 +147,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
           backgroundColor: theme.colors.surface
         }}
       >
-        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openNewMessage} />
+        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openNewMessage} onLoadOlder={onLoadOlderEmails} />
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>

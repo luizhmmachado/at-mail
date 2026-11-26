@@ -396,7 +396,15 @@ export function createAppStore(options: AppStoreOptions = {}) {
         affected.map((message) => message.id),
         (message) => ({ ...message, isRead })
       );
-      void onMarkMessagesRead?.(affected, isRead);
+      void Promise.resolve(onMarkMessagesRead?.(affected, isRead)).catch((error) => {
+        patchMessagesById(affected.map((message) => message.id), (message) => ({ ...message, isRead: !isRead }));
+        patch({
+          sync: {
+            ...snapshot.sync,
+            lastError: `Não foi possível atualizar a leitura: ${error instanceof Error ? error.message : 'Erro desconhecido.'}`
+          }
+        });
+      });
     },
 
     async toggleThreadStar(threadId: ThreadId): Promise<void> {

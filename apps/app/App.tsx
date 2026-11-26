@@ -23,9 +23,9 @@ import type { Account, AccountId, ChatMessage, ContextId, MessageId, UnifiedThre
 import { createLocalEmailMessage, formattedEmailBody } from './src/email-send';
 import type { EmailSendRequest } from './src/email-send';
 
-const EMAIL_SYNC_INTERVAL_MS = 5 * 1000;
+const EMAIL_SYNC_INTERVAL_MS = 30 * 1000;
 const CHAT_SYNC_INTERVAL_MS = 5 * 1000;
-const OPEN_CHAT_SYNC_INTERVAL_MS = 3 * 1000;
+const OPEN_CHAT_SYNC_INTERVAL_MS = 10 * 1000;
 
 let optimisticMessageSequence = 0;
 const legacySends = new Map<MessageId, { accountId: AccountId; confirmedAt: number }>();
@@ -404,6 +404,10 @@ export default function App() {
                 onRemoveAccount={removeConnectedAccount}
                 onSetAccountNotifications={setNotificationsForAccount}
                 onSendNewMessage={sendNewMessage}
+                onLoadOlderEmails={async () => {
+                  const emailAccounts = store.getSnapshot().accounts.filter((account) => account.channel === 'email' && account.status !== 'reauth-required');
+                  await Promise.all(emailAccounts.map((account) => syncEngine.syncOlder(account.id)));
+                }}
               />
             </MailStoreProvider>
           );

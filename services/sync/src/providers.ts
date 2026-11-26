@@ -117,11 +117,12 @@ export async function markGmailMessagesRead(
   isRead: boolean
 ): Promise<void> {
   const token = await accessToken(db, config, userId, accountId);
-  await Promise.all(messageIds.map((id) => googleJsonRequest(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(providerMessageId(id))}/modify`,
+  const ids = [...new Set(messageIds.map(providerMessageId))];
+  await googleJsonRequest(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify',
     token,
-    { method: 'POST', body: JSON.stringify(isRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }) }
-  )));
+    { method: 'POST', body: JSON.stringify({ ids, ...(isRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }) }) }
+  );
 }
 
 export async function moveGmailThreads(
@@ -529,11 +530,12 @@ function decodeCodePoint(value: number): string {
   return value <= 0x10ffff ? String.fromCodePoint(value) : '\uFFFD';
 }
 
-const GMAIL_PAGE_CURSOR_PREFIX = 'gmail-page:';
+const GMAIL_PAGE_CURSOR_PREFIX = 'gmail-period:';
+const GMAIL_PERIOD_DAYS = 7;
 
 export function gmailMessagesUrl(pageToken?: string): string {
   const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-  url.searchParams.set('maxResults', '100');
+  url.searchParams.set('maxResults', '50');
   url.searchParams.set('includeSpamTrash', 'true');
   if (pageToken) url.searchParams.set('pageToken', pageToken);
   return url.toString();
@@ -598,21 +600,39 @@ function parseGmailPageCursor(cursor: string): { historyId: string; pageToken: s
   }
 }
 
-export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[]; hasMore: boolean; historyReset: boolean }> {
+function gmailDate(timestamp: number): string {
+  return new Date(timestamp).toISOString().slice(0, 10).replaceAll('-', '/');
+}
+
+function gmailOlderCursor(historyId: string, before: number): string {
+  return `${GMAIL_PAGE_CURSOR_PREFIX}${Buffer.from(JSON.stringify([historyId, String(before)])).toString('base64url')}`;
+}
+
+export async function fetchGmail(db: Db, config: SyncConfig, userId: string, accountId: string, contextId: string, cursor?: string, olderCursor?: string): Promise<{ messages: MailMessage[]; cursor: string; removedIds: MessageId[]; hasMore: boolean; historyReset: boolean; olderCursor?: string }> {
   const token = await accessToken(db, config, userId, accountId);
   let messageIds: string[] | undefined;
   let nextCursor = '';
   let hasMore = false;
   let historyReset = false;
-  const pageCursor = cursor ? parseGmailPageCursor(cursor) : undefined;
+  const pageCursor = olderCursor ? parseGmailPageCursor(olderCursor) : undefined;
+  let nextOlderCursor: string | undefined;
 
   if (pageCursor) {
-    const list = await googleJson(gmailMessagesUrl(pageCursor.pageToken), token);
-    messageIds = (list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string');
-    nextCursor = list.nextPageToken
-      ? `${GMAIL_PAGE_CURSOR_PREFIX}${Buffer.from(JSON.stringify([pageCursor.historyId, list.nextPageToken])).toString('base64url')}`
-      : pageCursor.historyId;
-    hasMore = typeof list.nextPageToken === 'string' && list.nextPageToken.length > 0;
+    const before = Number(pageCursor.pageToken);
+    const after = before - GMAIL_PERIOD_DAYS * 86_400_000;
+    const ids = new Set<string>();
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(gmailMessagesUrl(pageToken));
+      url.searchParams.set('q', `after:${gmailDate(after)} before:${gmailDate(before)}`);
+      const list = await googleJson(url.toString(), token);
+      for (const item of list.messages ?? []) if (typeof item.id === 'string') ids.add(item.id);
+      pageToken = list.nextPageToken;
+    } while (pageToken);
+    messageIds = [...ids];
+    nextCursor = pageCursor.historyId;
+    nextOlderCursor = ids.size > 0 ? gmailOlderCursor(pageCursor.historyId, after) : undefined;
+    hasMore = ids.size > 0;
   } else if (cursor) {
     try {
       const addedIds = new Set<string>();
@@ -637,16 +657,21 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     historyReset = true;
     const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
     nextCursor = typeof profile.historyId === 'string' ? profile.historyId : '';
-    const list = await googleJson(gmailMessagesUrl(), token);
-    const ids = new Set<string>((list.messages ?? []).map((item: any) => item.id).filter((id: unknown): id is string => typeof id === 'string'));
-    if (typeof list.nextPageToken === 'string' && list.nextPageToken.length > 0) {
-      nextCursor = `${GMAIL_PAGE_CURSOR_PREFIX}${Buffer.from(JSON.stringify([nextCursor, list.nextPageToken])).toString('base64url')}`;
-      hasMore = true;
-    }
+    const ids = new Set<string>();
+    let pageToken: string | undefined;
+    const now = Date.now();
+    do {
+      const url = new URL(gmailMessagesUrl(pageToken));
+      url.searchParams.set('q', `newer_than:${GMAIL_PERIOD_DAYS}d`);
+      const list = await googleJson(url.toString(), token);
+      for (const item of list.messages ?? []) if (typeof item.id === 'string') ids.add(item.id);
+      pageToken = list.nextPageToken;
+    } while (pageToken);
+    nextOlderCursor = gmailOlderCursor(nextCursor, now - GMAIL_PERIOD_DAYS * 86_400_000);
     messageIds = [...ids];
   }
 
-  const messages = await mapWithConcurrency(messageIds ?? [], 8, async (id) => {
+  const messages = await mapWithConcurrency(messageIds ?? [], 3, async (id) => {
     const message = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token);
     const payload = message.payload ?? {};
     const headers = payload.headers ?? [];
@@ -660,7 +685,7 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
   });
 
-  return { messages, cursor: nextCursor, removedIds: [], hasMore, historyReset };
+  return { messages, cursor: nextCursor, removedIds: [], hasMore, historyReset, ...(nextOlderCursor ? { olderCursor: nextOlderCursor } : {}) };
 }
 
 export function resolveChatSpaceName(

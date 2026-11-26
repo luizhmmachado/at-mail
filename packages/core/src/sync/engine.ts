@@ -33,6 +33,7 @@ export class SyncEngine {
   private readonly onNewMessages?: SyncEngineOptions['onNewMessages'];
   private readonly runningAccounts = new Map<AccountId, Promise<SyncOutcome>>();
   private readonly runningSpaces = new Map<string, Promise<SyncOutcome>>();
+  private readonly runningOlderAccounts = new Map<AccountId, Promise<SyncOutcome>>();
   private readonly accountSyncVersions = new Map<AccountId, number>();
   private activeSyncRuns = 0;
 
@@ -82,6 +83,36 @@ export class SyncEngine {
 
   syncChannel(channel: ChannelKind): Promise<SyncOutcome[]> {
     return this.runAll(channel);
+  }
+
+  syncOlder(accountId: AccountId): Promise<SyncOutcome> {
+    const running = this.runningOlderAccounts.get(accountId);
+    if (running !== undefined) return running;
+    const account = this.store.accountFor(accountId);
+    if (account === undefined || account.olderSyncCursor === undefined) {
+      return Promise.resolve({ accountId, newMessages: 0, ok: true });
+    }
+    const adapter = this.adapterFor(account);
+    if (adapter?.fetchOlder === undefined) {
+      return Promise.resolve({ accountId, newMessages: 0, ok: false, error: 'adaptador não suporta páginas anteriores' });
+    }
+    const request = adapter.fetchOlder(account, account.olderSyncCursor)
+      .then((page) => {
+        this.store.actions.upsertMessages(page.messages);
+        this.markAccount(accountId, {
+          ...(page.olderCursor ? { olderSyncCursor: page.olderCursor } : { olderSyncCursor: undefined }),
+          lastError: undefined
+        });
+        return { accountId, newMessages: page.messages.length, ok: true };
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'falha desconhecida';
+        this.markAccount(accountId, { lastError: message });
+        return { accountId, newMessages: 0, ok: false, error: message };
+      })
+      .finally(() => this.runningOlderAccounts.delete(accountId));
+    this.runningOlderAccounts.set(accountId, request);
+    return request;
   }
 
   private async runAll(channel?: ChannelKind): Promise<SyncOutcome[]> {
@@ -175,6 +206,7 @@ export class SyncEngine {
         visitedCursors.add(cursor);
         this.markAccount(account.id, {
           status: page.requiresReauth === true ? 'reauth-required' : 'connected',
+          ...(page.olderCursor ? { olderSyncCursor: page.olderCursor } : {}),
           ...(spaceId === undefined ? {
             syncCursor: cursor,
             lastSyncedAt: hasMore || page.requiresReauth === true ? account.lastSyncedAt : startedAt
@@ -186,9 +218,10 @@ export class SyncEngine {
       return { accountId: account.id, newMessages: received, ok: true };
     } catch (error) {
       const isAuth = error instanceof SyncError && error.kind === 'auth';
+      const isRateLimited = error instanceof SyncError && error.kind === 'rate-limit';
       const message = error instanceof Error ? error.message : 'falha desconhecida';
       this.markAccount(account.id, {
-        status: isAuth ? 'reauth-required' : 'error', lastError: message,
+        status: isAuth ? 'reauth-required' : isRateLimited ? 'connected' : 'error', lastError: message,
         ...(error instanceof SyncError && error.kind === 'cursor' ? { syncCursor: '' } : {})
       });
       return { accountId: account.id, newMessages: 0, ok: false, error: message };
@@ -197,7 +230,7 @@ export class SyncEngine {
 
   private markAccount(
     accountId: AccountId,
-    patch: Partial<Pick<Account, 'status' | 'lastError' | 'lastSyncedAt' | 'syncCursor'>>
+    patch: Partial<Pick<Account, 'status' | 'lastError' | 'lastSyncedAt' | 'syncCursor' | 'olderSyncCursor'>>
   ): void {
     const account = this.store.accountFor(accountId);
     if (account === undefined) return;

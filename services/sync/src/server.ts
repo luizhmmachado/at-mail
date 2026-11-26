@@ -299,6 +299,8 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
           if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
           const messageIds = Array.isArray(input.messageIds) ? input.messageIds.map(String) : [];
+          if (messageIds.length === 0) return json(res, 200, { updated: 0 }, headers);
+          if (messageIds.length > 1_000 || messageIds.some((id) => !/^[\w:-]{1,256}$/.test(id))) return json(res, 400, { error: 'mensagens inválidas' }, headers);
           await markGmailMessagesRead(db, config, userId, accountId, messageIds, input.isRead !== false);
           return json(res, 200, { updated: messageIds.length }, headers);
         }
@@ -448,8 +450,9 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           if (spaceId !== undefined && !/^spaces\/[A-Za-z0-9._-]+$/.test(spaceId)) {
             return json(res, 400, { error: 'espaço inválido' }, headers);
           }
+          const olderCursor = typeof input.olderCursor === 'string' ? input.olderCursor : undefined;
           const result = syncMatch[1] === 'gmail'
-            ? await fetchGmail(db, config, userId, accountId, account.context_id, cursor)
+            ? await fetchGmail(db, config, userId, accountId, account.context_id, cursor, olderCursor)
             : await fetchChat(db, config, userId, accountId, account.context_id, { cursor, spaceId });
           return json(res, 200, result, headers);
         }
@@ -460,6 +463,9 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         if (error instanceof PayloadTooLargeError) return json(res, 413, { error: 'corpo da requisição muito grande' }, headers);
         if (error instanceof SyntaxError) return json(res, 400, { error: 'corpo JSON inválido' }, headers);
         if (error instanceof ConflictError) return json(res, 409, { error: error.message }, headers);
+        if (upstreamStatus === 429 || (upstreamStatus === 403 && /quota|rateLimitExceeded|userRateLimitExceeded/i.test(detail))) {
+          return json(res, 429, { error: 'A sincronização do Google está temporariamente limitada. Tente novamente em instantes.', errorCode: 'GOOGLE_RATE_LIMITED' }, { ...headers, 'retry-after': '30' });
+        }
         if ((error instanceof SyncError && error.kind === 'auth') || upstreamStatus === 401 || (upstreamStatus === 403 && /insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT|invalidCredentials|authError/i.test(detail))) {
           return json(res, 401, { error: 'A autorização da conta Google expirou. Faça login novamente.', errorCode: 'GOOGLE_AUTH_REVOKED' }, headers);
         }

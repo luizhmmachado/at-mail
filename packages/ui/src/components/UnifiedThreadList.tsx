@@ -24,6 +24,7 @@ export interface UnifiedThreadListProps {
   onOpenSettings?: () => void;
   /** Em telas pequenas a lista ocupa a tela inteira. */
   fullScreen?: boolean;
+  onLoadOlder?: () => Promise<void>;
 }
 
 /**
@@ -32,12 +33,14 @@ export interface UnifiedThreadListProps {
  * A ordem vertical é fixa: título (20/24) + chevron + escrever, busca de 34 px,
  * segmentado de 32 px e, dentro da lista, cabeçalhos de data com contagem.
  */
-export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false }: UnifiedThreadListProps): ReactElement {
+export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false, onLoadOlder }: UnifiedThreadListProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const [menuOpen, setMenuOpen] = useState(false);
   const [actionThread, setActionThread] = useState<UnifiedThread>();
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasScrolled, setHasScrolled] = useState(false);
 
   const sections = useMemo(
     () => groupByDate(feed.threads).map((section) => ({ title: section.label, data: section.threads })),
@@ -252,6 +255,16 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
         )}
         ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={snapshot.sync.status === 'syncing' && snapshot.sync.lastSyncedAt === undefined} />}
         contentContainerStyle={{ paddingBottom: fullScreen ? theme.space[10] : theme.space[6] }}
+        onEndReached={onLoadOlder && !loadingOlder ? () => {
+          if (!hasScrolled) return;
+          setLoadingOlder(true);
+          void onLoadOlder().finally(() => setLoadingOlder(false));
+        } : undefined}
+        onEndReachedThreshold={0.4}
+        onScroll={(event) => {
+          if (event.nativeEvent.contentOffset.y > 8) setHasScrolled(true);
+        }}
+        scrollEventThrottle={16}
       />
 
       {mobile && selectionMode && selectedCount > 0 && <BulkActionBar />}

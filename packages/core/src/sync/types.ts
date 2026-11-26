@@ -4,6 +4,7 @@ export interface SyncPage {
   messages: MailMessage[];
   nextCursor?: string;
   hasMore?: boolean;
+  olderCursor?: string;
   removedIds: MessageId[];
   /** Indica que o provedor exige nova autorização (refresh token inválido/revogado). */
   requiresReauth?: boolean;
@@ -23,6 +24,7 @@ export interface MailboxAdapter {
   readonly channel: ChannelKind;
   /** Leitura incremental: usa o cursor para pedir somente o delta. */
   fetchSince(account: Account, cursor?: string): Promise<SyncPage>;
+  fetchOlder?(account: Account, cursor: string): Promise<SyncPage>;
   fetchSpace?(account: Account, spaceId: string): Promise<SyncPage>;
   archive?(account: Account, messageIds: readonly MessageId[]): Promise<void>;
   markRead?(account: Account, messageIds: readonly MessageId[], isRead: boolean): Promise<void>;

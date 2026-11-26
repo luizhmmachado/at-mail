@@ -58,7 +58,7 @@ describe('nome de espaços do Google Chat', () => {
     reason = 'ACCESS_TOKEN_SCOPE_INSUFFICIENT';
     assert.equal(JSON.parse((await sync()).body).errorCode, 'GOOGLE_AUTH_REVOKED');
     reason = 'rateLimitExceeded';
-    assert.equal((await sync()).status, 500);
+    assert.equal((await sync()).status, 429);
   });
 
   it('carrega imagem do Chat com credencial da conta e rejeita acesso de outra conta', async (t) => {
@@ -367,7 +367,7 @@ describe('conexão PostgreSQL serverless', () => {
 });
 
 describe('sincronização do Gmail', () => {
-  it('carrega favoritos antigos de todas as páginas e retém o cursor anterior à varredura', async (t) => {
+  it('carrega os últimos sete dias e depois o período anterior', async (t) => {
     const { db, accounts, credentials } = createFakeDb();
     accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
     credentials.add('gmail-1');
@@ -377,21 +377,25 @@ describe('sincronização do Gmail', () => {
       paths.push(url.pathname);
       if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
       if (url.pathname.endsWith('/profile')) return Response.json({ historyId: '100' });
-      if (url.pathname.endsWith('/messages')) return Response.json(
-        url.searchParams.get('pageToken')
-          ? { messages: [{ id: 'old-2' }] }
-          : { messages: [{ id: 'recent' }, { id: 'old-1' }], nextPageToken: 'next' }
-      );
+      if (url.pathname.endsWith('/messages')) {
+        if (url.searchParams.get('q')?.startsWith('after:')) return Response.json({ messages: [{ id: 'old-2' }] });
+        return Response.json(
+          url.searchParams.get('pageToken')
+            ? { messages: [{ id: 'old-2' }] }
+            : { messages: [{ id: 'recent' }, { id: 'old-1' }], nextPageToken: 'next' }
+        );
+      }
       const id = url.pathname.split('/').pop();
       return Response.json({ id, threadId: id, historyId: '105', labelIds: ['STARRED'], payload: { headers: [] } });
     });
     const first = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work');
-    assert.deepEqual(first.messages.map((message) => message.id), ['gmail:gmail-1:recent', 'gmail:gmail-1:old-1']);
-    assert.equal(first.hasMore, true);
-    assert.match(first.cursor, /^gmail-page:/);
-    const second = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work', first.cursor);
+    assert.deepEqual(first.messages.map((message) => message.id), ['gmail:gmail-1:recent', 'gmail:gmail-1:old-1', 'gmail:gmail-1:old-2']);
+    assert.equal(first.cursor, '100');
+    assert.equal(first.hasMore, false);
+    assert.match(first.olderCursor ?? '', /^gmail-period:/);
+    const second = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work', undefined, first.olderCursor);
     assert.deepEqual(second.messages.map((message) => message.id), ['gmail:gmail-1:old-2']);
-    assert.equal(second.hasMore, false);
+    assert.equal(second.hasMore, true);
     assert.equal(second.cursor, '100');
     assert.ok(paths.indexOf('/gmail/v1/users/me/profile') < paths.indexOf('/gmail/v1/users/me/messages'));
   });
@@ -421,7 +425,7 @@ describe('sincronização do Gmail', () => {
   it('sempre consulta as mensagens mais recentes sem reaproveitar pageToken', () => {
     const url = new URL(gmailMessagesUrl());
 
-    assert.equal(url.searchParams.get('maxResults'), '100');
+    assert.equal(url.searchParams.get('maxResults'), '50');
     assert.equal(url.searchParams.get('includeSpamTrash'), 'true');
     assert.equal(url.searchParams.has('pageToken'), false);
   });
