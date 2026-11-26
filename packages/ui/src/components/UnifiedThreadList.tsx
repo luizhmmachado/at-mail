@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Image, Pressable, SectionList, Text, TextInput, View, type ImageSourcePropType } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, SectionList, Text, TextInput, View, type ImageSourcePropType } from 'react-native';
 import {
   contextAccent,
   formatShortcut,
@@ -9,7 +9,7 @@ import {
   type UnifiedThread
 } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
-import { useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
+import { useAppStore, useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { currentPlatform } from '../platform';
 import { typeStyle } from '../theme/typography';
 import { ChannelTabs } from './ChannelTabs';
@@ -37,6 +37,7 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [actionThread, setActionThread] = useState<UnifiedThread>();
 
   const sections = useMemo(
     () => groupByDate(feed.threads).map((section) => ({ title: section.label, data: section.threads })),
@@ -45,11 +46,17 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
 
   const mobile = fullScreen;
   const title =
-    snapshot.view.starredOnly
+    snapshot.view.emailFolder === 'archived'
+      ? 'Arquivados'
+      : snapshot.view.emailFolder === 'trash'
+      ? 'Lixeira'
+      : snapshot.view.starredOnly
       ? 'Favoritos'
       : snapshot.view.contextId === 'all'
       ? 'Todas as caixas'
       : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'Todas as caixas');
+  const selectionMode = snapshot.ui.selectingThreads;
+  const selectedCount = snapshot.ui.selectedThreadIds.length;
 
   const platform = currentPlatform();
 
@@ -81,12 +88,18 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                 color: theme.colors.textPrimary
               }}
             >
-              {title}
+              {selectionMode ? `${selectedCount} ${selectedCount === 1 ? 'selecionado' : 'selecionados'}` : title}
             </Text>
             <Glyph name="chevron-down" size={mobile ? 20 : 18} color={theme.colors.textSecondary} />
           </Pressable>
 
           <View style={{ flex: 1 }} />
+
+          {selectionMode && (
+            <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Cancelar</Text>
+            </Pressable>
+          )}
 
           {mobile ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[4] }}>
@@ -164,6 +177,17 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
         <View style={{ marginTop: mobile ? 21 : 14 }}>
           <ChannelTabs feed={feed} variant={mobile ? 'mobile' : 'desktop'} />
         </View>
+        <FolderTabs />
+        {!selectionMode && snapshot.view.channel !== 'chat' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Selecionar e-mails"
+            onPress={() => actions.setSelectingThreads(true)}
+            style={{ position: mobile ? 'relative' : 'absolute', alignSelf: mobile ? 'flex-end' : undefined, right: mobile ? undefined : theme.space[4], top: mobile ? undefined : 78, marginTop: mobile ? 8 : 0, paddingVertical: 4 }}
+          >
+            <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar</Text>
+          </Pressable>
+        )}
       </View>
 
       <SectionList<UnifiedThread, { title: string; data: UnifiedThread[] }>
@@ -200,6 +224,11 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                   {unread} não {unread === 1 ? 'lida' : 'lidas'}
                 </Text>
               )}
+              {selectionMode && !mobile && section === sections[0] && (
+                <Pressable accessibilityRole="button" onPress={actions.selectAllThreads}>
+                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar todos</Text>
+                </Pressable>
+              )}
             </View>
           );
         }}
@@ -210,12 +239,37 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
             showContextIndicator={snapshot.view.contextId === 'all'}
             variant={mobile ? 'mobile' : 'desktop'}
             isLast={index === section.data.length - 1}
+            selectionMode={selectionMode && item.channel === 'email'}
+            selectedForAction={item.channel === 'email' && snapshot.ui.selectedThreadIds.includes(item.id)}
+            onToggleSelection={() => actions.toggleThreadSelection(item.id)}
+            onOpenActions={() => setActionThread(item)}
             onPress={() => onSelectThread(item.id)}
           />
         )}
-        ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={snapshot.sync.status === 'syncing'} />}
+        ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={snapshot.sync.status === 'syncing' && snapshot.sync.lastSyncedAt === undefined} />}
         contentContainerStyle={{ paddingBottom: fullScreen ? theme.space[10] : theme.space[6] }}
       />
+
+      {mobile && selectionMode && selectedCount > 0 && <BulkActionBar />}
+
+      <Modal transparent animationType="slide" visible={actionThread !== undefined} onRequestClose={() => setActionThread(undefined)}>
+        {actionThread !== undefined && (
+          <Pressable accessibilityLabel="Fechar ações do e-mail" onPress={() => setActionThread(undefined)} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+            <Pressable onPress={(event) => event.stopPropagation()} style={{ backgroundColor: theme.colors.surface, borderTopLeftRadius: theme.radius.xxl, borderTopRightRadius: theme.radius.xxl, padding: theme.space[4], gap: 3 }}>
+              <Text numberOfLines={1} style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>{actionThread.subject}</Text>
+              <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: theme.space[2] }}>
+                {actionThread.participants[0]?.name ?? 'E-mail'}
+              </Text>
+              <ActionSheetButton label={actionThread.unreadCount > 0 ? 'Marcar como lido' : 'Marcar como não lido'} onPress={() => { actions.markThreadRead(actionThread.id, actionThread.unreadCount > 0); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} onPress={() => { void actions.toggleThreadStar(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'inbox' ? 'Arquivar e-mail' : 'Mover para a caixa de entrada'} onPress={() => { actionThread.emailFolder === 'inbox' ? actions.archiveThread(actionThread.id) : actions.restoreThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'trash' ? 'Mover para a caixa de entrada' : 'Mover para a lixeira'} danger={actionThread.emailFolder !== 'trash'} onPress={() => { actionThread.emailFolder === 'trash' ? actions.restoreThread(actionThread.id) : actions.trashThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Selecionar e-mail" onPress={() => { actions.toggleThreadSelection(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Cancelar" onPress={() => setActionThread(undefined)} />
+            </Pressable>
+          </Pressable>
+        )}
+      </Modal>
 
       {menuOpen && (
         <>
@@ -279,6 +333,88 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
   );
 }
 
+function FolderTabs(): ReactElement {
+  const theme = useTheme();
+  const snapshot = useMailSnapshot();
+  const actions = useMailActions();
+  const folders = [
+    ['inbox', 'Caixa'],
+    ['archived', 'Arquivados'],
+    ['trash', 'Lixeira']
+  ] as const;
+  return (
+    <View accessibilityRole="tablist" style={{ flexDirection: 'row', height: 38, marginTop: 6, borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
+      {folders.map(([id, label]) => {
+        const selected = snapshot.view.emailFolder === id;
+        return (
+          <Pressable
+            key={id}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            onPress={() => actions.setEmailFolder(id)}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', borderBottomWidth: selected ? 2 : 0, borderBottomColor: theme.colors.accent }}
+          >
+            <Text style={{ ...typeStyle(theme, 'segment', selected ? 'medium' : 'regular'), color: selected ? theme.colors.accent : theme.colors.textSecondary }}>{label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function BulkActionBar(): ReactElement {
+  const theme = useTheme();
+  const snapshot = useMailSnapshot();
+  const actions = useMailActions();
+  const store = useAppStore();
+  const apply = (action: 'read' | 'unread' | 'favorite' | 'archive' | 'trash'): void => {
+    if (action === 'archive') actions.moveThreads(snapshot.ui.selectedThreadIds, 'archived');
+    if (action === 'trash') actions.moveThreads(snapshot.ui.selectedThreadIds, 'trash');
+    for (const id of snapshot.ui.selectedThreadIds) {
+      if (action === 'read') actions.markThreadRead(id, true);
+      if (action === 'unread') actions.markThreadRead(id, false);
+      if (action === 'favorite') {
+        const thread = store.getThread(id);
+        if (thread !== undefined && !thread.flags.isStarred) void actions.toggleThreadStar(id);
+      }
+    }
+    actions.clearThreadSelection();
+  };
+  const count = snapshot.ui.selectedThreadIds.length;
+  return (
+    <View style={{ paddingHorizontal: theme.space[3], paddingTop: theme.space[2], paddingBottom: theme.space[1], borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.borderSubtle, backgroundColor: theme.colors.surface }}>
+      <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: 4 }}>
+        Aplicar a {count} {count === 1 ? 'e-mail' : 'e-mails'}
+      </Text>
+      <View style={{ flexDirection: 'row' }}>
+        <BulkAction label="Lido" onPress={() => apply('read')} />
+        <BulkAction label="Não lido" onPress={() => apply('unread')} />
+        <BulkAction label="Favorito" onPress={() => apply('favorite')} />
+        <BulkAction label="Arquivar" onPress={() => apply('archive')} />
+        <BulkAction label="Excluir" danger onPress={() => apply('trash')} />
+      </View>
+    </View>
+  );
+}
+
+function BulkAction({ label, danger = false, onPress }: { label: string; danger?: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ ...typeStyle(theme, 'composeHint', 'medium'), color: danger ? theme.colors.danger : theme.colors.textPrimary, textAlign: 'center' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function ActionSheetButton({ label, danger = false, onPress }: { label: string; danger?: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={{ height: 48, alignItems: 'flex-start', justifyContent: 'center', paddingHorizontal: theme.space[1] }}>
+      <Text style={{ ...typeStyle(theme, 'body'), color: danger ? theme.colors.danger : theme.colors.textPrimary }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function ContextOption({
   label,
   accent,
@@ -333,7 +469,7 @@ function EmptyState({ query, loading }: { query: string; loading: boolean }): Re
           ? 'Buscando suas mensagens e conversas.'
           : query.length > 0
           ? `Nenhuma conversa corresponde a “${query}”. Tente from:, context: ou in:chat.`
-          : 'Nenhuma conversa neste contexto. Ao chegar algo novo, aparece aqui.'}
+          : 'Nenhuma conversa neste contexto ou pasta. Ao chegar algo novo, aparece aqui.'}
       </Text>
     </View>
   );

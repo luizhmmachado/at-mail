@@ -25,6 +25,7 @@ export interface ViewState {
   query: string;
   unreadOnly: boolean;
   starredOnly: boolean;
+  emailFolder: 'inbox' | 'archived' | 'trash';
   selectedThreadId?: ThreadId;
   /** `false` significa que a seleção foi automática (primeira da lista). */
   selectionPinned: boolean;
@@ -44,6 +45,8 @@ export interface UiState {
   composeOpen: boolean;
   sidebarCollapsed: boolean;
   pendingStarThreadIds: readonly ThreadId[];
+  selectingThreads: boolean;
+  selectedThreadIds: readonly ThreadId[];
 }
 
 export interface AppSnapshot {
@@ -65,6 +68,10 @@ export interface AppStoreOptions {
   themePreference?: ThemePreference;
   onMarkMessagesRead?: (messages: readonly MailMessage[], isRead: boolean) => void | Promise<void>;
   onSetThreadStarred?: (message: Extract<MailMessage, { channel: 'email' }>, isStarred: boolean) => Promise<void>;
+  onMoveThreads?: (
+    messages: readonly Extract<MailMessage, { channel: 'email' }>[],
+    folder: 'inbox' | 'archived' | 'trash'
+  ) => Promise<void>;
 }
 
 const DEFAULT_UI: UiState = {
@@ -73,7 +80,9 @@ const DEFAULT_UI: UiState = {
   commandPaletteOpen: false,
   composeOpen: false,
   sidebarCollapsed: false,
-  pendingStarThreadIds: []
+  pendingStarThreadIds: [],
+  selectingThreads: false,
+  selectedThreadIds: []
 };
 
 export const ALL_CONTEXTS: ContextFilter = 'all';
@@ -91,6 +100,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
       query: '',
       unreadOnly: false,
       starredOnly: false,
+      emailFolder: 'inbox',
       selectionPinned: false
     },
     sync: { status: 'idle', inFlightAccounts: [] },
@@ -131,12 +141,17 @@ export function createAppStore(options: AppStoreOptions = {}) {
       partial.channel !== undefined ||
       partial.sentOnly !== undefined ||
       partial.starredOnly !== undefined ||
+      partial.emailFolder !== undefined ||
       partial.query !== undefined
     ) {
       view.selectionPinned = false;
       view.selectedThreadId = undefined;
     }
-    setSnapshot({ ...snapshot, view });
+    setSnapshot({
+      ...snapshot,
+      view,
+      ui: { ...snapshot.ui, selectingThreads: false, selectedThreadIds: [] }
+    });
   }
 
   function feed(): FeedResult {
@@ -153,7 +168,8 @@ export function createAppStore(options: AppStoreOptions = {}) {
       sentOnly: snapshot.view.sentOnly,
       query: snapshot.view.query,
       unreadOnly: snapshot.view.unreadOnly,
-      starredOnly: snapshot.view.starredOnly
+      starredOnly: snapshot.view.starredOnly,
+      folder: snapshot.view.emailFolder
     });
     cachedResult = { messages: snapshot.messages, view: snapshot.view, feed: result };
     return result;
@@ -205,6 +221,41 @@ export function createAppStore(options: AppStoreOptions = {}) {
     upsertMessages(updated);
   }
 
+  function moveThreadsToFolder(
+    threadIds: readonly ThreadId[],
+    folder: 'inbox' | 'archived' | 'trash'
+  ): void {
+    const targets = new Set(threadIds);
+    const affected = snapshot.messages.filter(
+      (message): message is Extract<MailMessage, { channel: 'email' }> =>
+        message.channel === 'email' && targets.has(groupingKey(message))
+    );
+    if (affected.length === 0) return;
+    const previous = new Map(affected.map((message) => [
+      message.id,
+      { folder: message.folder, isRead: message.isRead }
+    ]));
+    patchMessagesById(
+      previous.keys(),
+      (message) => message.channel === 'email'
+        ? { ...message, folder, isRead: folder === 'inbox' ? message.isRead : true }
+        : message
+    );
+    if (snapshot.view.selectedThreadId !== undefined && targets.has(snapshot.view.selectedThreadId)) {
+      patch({ view: { ...snapshot.view, selectedThreadId: undefined, selectionPinned: false } });
+      ensureSelection();
+    }
+    void options.onMoveThreads?.(affected, folder).catch((error) => {
+      patchMessagesById(previous.keys(), (message) => {
+        const original = previous.get(message.id);
+        return original !== undefined && message.channel === 'email'
+          ? { ...message, folder: original.folder, isRead: original.isRead }
+          : message;
+      });
+      patch({ sync: { ...snapshot.sync, lastError: `Não foi possível mover os e-mails: ${error instanceof Error ? error.message : 'Erro desconhecido.'}` } });
+    });
+  }
+
   const actions = {
     setContext(contextId: ContextFilter): void {
       setView({ contextId, starredOnly: false });
@@ -212,12 +263,22 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     setChannel(channel: ChannelFilter): void {
-      setView({ channel, sentOnly: false, ...(channel === 'chat' ? { starredOnly: false } : {}) });
+      setView({
+        channel,
+        sentOnly: false,
+        emailFolder: 'inbox',
+        ...(channel === 'chat' ? { starredOnly: false } : {})
+      });
       ensureSelection();
     },
 
     setSentOnly(sentOnly: boolean): void {
-      setView({ channel: sentOnly ? 'email' : snapshot.view.channel, sentOnly });
+      setView({ channel: sentOnly ? 'email' : snapshot.view.channel, sentOnly, emailFolder: 'inbox' });
+      ensureSelection();
+    },
+
+    setEmailFolder(emailFolder: ViewState['emailFolder']): void {
+      setView({ emailFolder, channel: 'email', sentOnly: false, starredOnly: false });
       ensureSelection();
     },
 
@@ -232,8 +293,46 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     setStarredOnly(starredOnly: boolean): void {
-      setView({ starredOnly, ...(starredOnly ? { contextId: ALL_CONTEXTS, channel: 'email' as const, sentOnly: false } : {}) });
+      setView({
+        starredOnly,
+        ...(starredOnly
+          ? { contextId: ALL_CONTEXTS, channel: 'email' as const, sentOnly: false, emailFolder: 'inbox' as const }
+          : {})
+      });
       ensureSelection();
+    },
+
+    setSelectingThreads(selectingThreads: boolean): void {
+      patch({
+        ui: {
+          ...snapshot.ui,
+          selectingThreads,
+          selectedThreadIds: selectingThreads ? snapshot.ui.selectedThreadIds : []
+        }
+      });
+    },
+
+    toggleThreadSelection(threadId: ThreadId): void {
+      const selected = new Set(snapshot.ui.selectedThreadIds);
+      if (selected.has(threadId)) selected.delete(threadId);
+      else selected.add(threadId);
+      patch({ ui: { ...snapshot.ui, selectingThreads: true, selectedThreadIds: [...selected] } });
+    },
+
+    selectAllThreads(): void {
+      patch({
+        ui: {
+          ...snapshot.ui,
+          selectingThreads: true,
+          selectedThreadIds: feed().threads
+            .filter((thread) => thread.channel === 'email')
+            .map((thread) => thread.id)
+        }
+      });
+    },
+
+    clearThreadSelection(): void {
+      patch({ ui: { ...snapshot.ui, selectingThreads: false, selectedThreadIds: [] } });
     },
 
     selectThread(threadId: ThreadId | undefined): void {
@@ -324,33 +423,19 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     archiveThread(threadId: ThreadId): void {
-      const affected = snapshot.messages.filter(
-        (message) => message.channel === 'email' && groupingKey(message) === threadId
-      );
-      if (affected.length === 0) return;
-      patchMessagesById(
-        affected.map((message) => message.id),
-        (message) => ({ ...message, folder: 'archived' as const, isRead: true })
-      );
-      if (snapshot.view.selectedThreadId === threadId) {
-        patch({ view: { ...snapshot.view, selectedThreadId: undefined, selectionPinned: false } });
-        ensureSelection();
-      }
+      moveThreadsToFolder([threadId], 'archived');
     },
 
     trashThread(threadId: ThreadId): void {
-      const affected = snapshot.messages.filter(
-        (message) => message.channel === 'email' && groupingKey(message) === threadId
-      );
-      if (affected.length === 0) return;
-      patchMessagesById(
-        affected.map((message) => message.id),
-        (message) => ({ ...message, folder: 'trash' as const, isRead: true })
-      );
-      if (snapshot.view.selectedThreadId === threadId) {
-        patch({ view: { ...snapshot.view, selectedThreadId: undefined, selectionPinned: false } });
-        ensureSelection();
-      }
+      moveThreadsToFolder([threadId], 'trash');
+    },
+
+    restoreThread(threadId: ThreadId): void {
+      moveThreadsToFolder([threadId], 'inbox');
+    },
+
+    moveThreads(threadIds: readonly ThreadId[], folder: 'inbox' | 'archived' | 'trash'): void {
+      moveThreadsToFolder(threadIds, folder);
     },
 
     addContext(context: ContextWorkspace): void {

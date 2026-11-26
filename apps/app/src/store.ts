@@ -1,7 +1,7 @@
 import { createAppStore, createPresetContexts, createSeedData, SyncEngine } from '@mail/core';
 import type { MailboxAdapter, SyncPage } from '@mail/core';
 import { DEMO_MODE } from './config';
-import { createHttpAdapter, markMessagesRead, setThreadStarred } from './adapters/sync-client';
+import { createHttpAdapter, markMessagesRead, moveEmailThreads, setThreadStarred } from './adapters/sync-client';
 import { readThemePreferenceSync, writeThemePreference } from './theme-preference';
 import { presentMessageNotification } from './notifications';
 import { Appearance } from 'react-native';
@@ -16,7 +16,8 @@ export const store = createAppStore({
   themePreference,
   themeMode: themePreference === 'system' ? Appearance.getColorScheme() ?? 'light' : themePreference,
   onMarkMessagesRead: DEMO_MODE ? undefined : markMessagesRead,
-  onSetThreadStarred: DEMO_MODE ? undefined : setThreadStarred
+  onSetThreadStarred: DEMO_MODE ? undefined : setThreadStarred,
+  onMoveThreads: DEMO_MODE ? undefined : moveEmailThreads
 });
 
 /** O tema escolhido sobrevive a reinícios do site/app. */

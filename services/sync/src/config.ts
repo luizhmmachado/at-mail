@@ -15,6 +15,7 @@ export interface SyncConfig {
   encryptionKey: Buffer;
   publicOrigins: string[];
   webAppOrigin: string;
+  pushCronSecret?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
@@ -37,7 +38,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig {
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
-    webAppOrigin: env.WEB_APP_ORIGIN ?? 'http://localhost:8081'
+    webAppOrigin: env.WEB_APP_ORIGIN ?? 'http://localhost:8081',
+    pushCronSecret: env.CRON_SECRET?.trim() ?? env.PUSH_CRON_SECRET?.trim()
   };
 }
 

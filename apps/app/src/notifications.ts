@@ -3,8 +3,11 @@ import * as Notifications from 'expo-notifications';
 import { decideNotification } from '@mail/core';
 import type { ContextFilter, ContextWorkspace, MailMessage } from '@mail/core';
 import { isTauriRuntime } from './auth';
+import { apiFetch } from './auth';
 
 let initialized = false;
+let registeredPushToken: string | undefined;
+const EXPO_PROJECT_ID = 'ae3fd8e1-4744-4fcf-8623-a1a63cb6646d';
 
 export async function ensureNotificationPermission(): Promise<boolean> {
   if (isTauriRuntime()) {
@@ -51,6 +54,21 @@ export interface PresentOptions {
   contexts: readonly ContextWorkspace[];
   activeContext: string | 'all';
   notificationsEnabled?: boolean;
+}
+
+export async function registerPushNotifications(): Promise<void> {
+  if (Platform.OS !== 'android' && Platform.OS !== 'ios') return;
+  const permission = await ensureNotificationPermission();
+  if (!permission) return;
+  const result = await Notifications.getExpoPushTokenAsync({ projectId: EXPO_PROJECT_ID });
+  if (registeredPushToken === result.data) return;
+  const response = await apiFetch('/accounts/push-token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: result.data, platform: Platform.OS })
+  });
+  if (!response.ok) throw new Error(`Não foi possível registrar notificações (${response.status})`);
+  registeredPushToken = result.data;
 }
 
 /**

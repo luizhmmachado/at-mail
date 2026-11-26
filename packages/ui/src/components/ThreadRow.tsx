@@ -19,6 +19,10 @@ export interface ThreadRowProps {
   onPress: () => void;
   variant?: 'desktop' | 'mobile';
   isLast?: boolean;
+  selectionMode?: boolean;
+  selectedForAction?: boolean;
+  onToggleSelection?: () => void;
+  onOpenActions?: () => void;
 }
 
 /**
@@ -34,7 +38,11 @@ export function ThreadRow({
   showContextIndicator,
   onPress,
   variant = 'desktop',
-  isLast = false
+  isLast = false,
+  selectionMode = false,
+  selectedForAction = false,
+  onToggleSelection,
+  onOpenActions
 }: ThreadRowProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
@@ -53,7 +61,9 @@ export function ThreadRow({
   const contentInset = mobile ? theme.layout.mobileRowContentInset : theme.layout.rowContentInset;
   const inset = theme.layout.rowDotInset;
 
-  const background = selected
+  const background = selectedForAction
+    ? theme.colors.accentMuted
+    : selected
     ? theme.colors.surfaceSelected
     : hovered
       ? theme.colors.surfaceHover
@@ -69,7 +79,8 @@ export function ThreadRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${unread ? 'Não lida. ' : ''}${primaryLabel}. ${secondaryLabel}`}
-      onPress={onPress}
+      onPress={selectionMode ? onToggleSelection : onPress}
+      onLongPress={mobile ? onOpenActions : undefined}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       style={{
@@ -100,7 +111,27 @@ export function ThreadRow({
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: contentInset - inset }} />
+          {selectionMode ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selectedForAction }}
+              accessibilityLabel={selectedForAction ? 'Remover e-mail da seleção' : 'Selecionar e-mail'}
+              onPress={onToggleSelection}
+              style={{
+                width: 18,
+                height: 18,
+                marginRight: contentInset - inset - 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1.5,
+                borderColor: selectedForAction ? theme.colors.accent : theme.colors.borderStrong,
+                borderRadius: 5,
+                backgroundColor: selectedForAction ? theme.colors.accent : 'transparent'
+              }}
+            >
+              {selectedForAction && <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+            </Pressable>
+          ) : <View style={{ width: contentInset - inset }} />}
           {chatAvatarUrl !== undefined && (
             <Image
               accessibilityLabel={`Foto de ${threadParticipantsLabel(thread, 1)}`}
@@ -198,7 +229,17 @@ export function ThreadRow({
         />
       )}
     </Pressable>
-    {thread.channel === 'email' && (
+    {thread.channel === 'email' && !selectionMode && mobile && (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Ações para ${thread.subject}`}
+        onPress={onOpenActions}
+        style={{ position: 'absolute', top: 34, right: 20, padding: 4 }}
+      >
+        <Glyph name="dots" size={17} color={theme.colors.textSecondary} />
+      </Pressable>
+    )}
+    {thread.channel === 'email' && !selectionMode && (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
@@ -208,13 +249,45 @@ export function ThreadRow({
         style={{
           position: 'absolute',
           top: mobile ? 35 : 29,
-          right: (mobile ? theme.layout.mobilePaddingX : theme.layout.rowPaddingX) + (unread ? 13 : 0),
+          right: mobile ? 48 : (theme.layout.rowPaddingX + (unread ? 13 : 0)),
           padding: 3
         }}
       >
         <Glyph name="star" size={14} color={thread.flags.isStarred ? theme.colors.accent : theme.colors.textSecondary} fill={thread.flags.isStarred ? theme.colors.accent : 'none'} />
       </Pressable>
     )}
+    {thread.channel === 'email' && !selectionMode && hovered && !mobile && (
+      <View
+        style={{
+          position: 'absolute',
+          top: 19,
+          right: 35,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 5,
+          paddingHorizontal: 5,
+          backgroundColor: background
+        }}
+      >
+        <RowAction label={unread ? 'Marcar como lida' : 'Marcar como não lida'} onPress={() => actions.markThreadRead(thread.id, unread)}>
+          <Glyph name="mail" size={14} color={theme.colors.textSecondary} />
+        </RowAction>
+        <RowAction label={thread.emailFolder === 'inbox' ? 'Arquivar' : 'Mover para a caixa de entrada'} onPress={() => thread.emailFolder === 'inbox' ? actions.archiveThread(thread.id) : actions.restoreThread(thread.id)}>
+          <Glyph name={thread.emailFolder === 'inbox' ? 'archive' : 'inbox'} size={14} color={theme.colors.textSecondary} />
+        </RowAction>
+        <RowAction label={thread.emailFolder === 'trash' ? 'Mover para a caixa de entrada' : 'Excluir'} onPress={() => thread.emailFolder === 'trash' ? actions.restoreThread(thread.id) : actions.trashThread(thread.id)}>
+          <Glyph name={thread.emailFolder === 'trash' ? 'inbox' : 'trash'} size={14} color={theme.colors.textSecondary} />
+        </RowAction>
+      </View>
+    )}
     </View>
+  );
+}
+
+function RowAction({ label, onPress, children }: { label: string; onPress: () => void; children: ReactElement }): ReactElement {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={(event) => { event.stopPropagation(); onPress(); }} style={{ width: 25, height: 25, alignItems: 'center', justifyContent: 'center' }}>
+      {children}
+    </Pressable>
   );
 }

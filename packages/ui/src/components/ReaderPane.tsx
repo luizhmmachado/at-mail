@@ -91,6 +91,8 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
     [snapshot.contexts, thread]
   );
 
+  if (snapshot.ui.selectingThreads) return <BulkSelectionPane />;
+
   if (thread === undefined) {
     return (
       <View
@@ -434,6 +436,66 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
         )}
       </View>
     </View>
+  );
+}
+
+function BulkSelectionPane(): ReactElement {
+  const theme = useTheme();
+  const store = useAppStore();
+  const snapshot = useMailSnapshot();
+  const actions = useMailActions();
+  const selected = snapshot.ui.selectedThreadIds
+    .map((id) => store.getThread(id))
+    .filter((thread): thread is UnifiedThread => thread !== undefined);
+  const apply = (action: 'read' | 'unread' | 'favorite' | 'archive' | 'trash'): void => {
+    if (action === 'archive') actions.moveThreads(selected.map((thread) => thread.id), 'archived');
+    if (action === 'trash') actions.moveThreads(selected.map((thread) => thread.id), 'trash');
+    for (const thread of selected) {
+      if (action === 'read') actions.markThreadRead(thread.id, true);
+      if (action === 'unread') actions.markThreadRead(thread.id, false);
+      if (action === 'favorite' && !thread.flags.isStarred) void actions.toggleThreadStar(thread.id);
+    }
+    actions.clearThreadSelection();
+  };
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
+      <View style={{ height: theme.layout.headerHeight, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space[8], borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
+        <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textPrimary }}>
+          {selected.length} {selected.length === 1 ? 'e-mail selecionado' : 'e-mails selecionados'}
+        </Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
+          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancelar</Text>
+        </Pressable>
+      </View>
+      <View style={{ padding: theme.space[8], alignItems: 'center' }}>
+        <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Organize sua caixa.</Text>
+        <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
+          {selected.length === 0 ? 'Selecione um ou mais e-mails na lista.' : `Aplique uma ação aos ${selected.length} e-mails selecionados.`}
+        </Text>
+        {selected.length > 0 && (
+          <View style={{ width: '100%', maxWidth: 520, marginTop: theme.space[8], gap: theme.space[3] }}>
+            <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
+              <BulkPaneAction label="Marcar como lidos" onPress={() => apply('read')} />
+              <BulkPaneAction label="Marcar como não lidos" onPress={() => apply('unread')} />
+            </View>
+            <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
+              <BulkPaneAction label="Adicionar aos favoritos" onPress={() => apply('favorite')} />
+              <BulkPaneAction label="Arquivar" onPress={() => apply('archive')} />
+              <BulkPaneAction label="Mover para a lixeira" danger onPress={() => apply('trash')} />
+            </View>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function BulkPaneAction({ label, danger = false, onPress }: { label: string; danger?: boolean; onPress: () => void }): ReactElement {
+  const theme = useTheme();
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={{ flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', paddingHorizontal: theme.space[3], borderRadius: theme.radius.lg, borderWidth: theme.border.hairline, borderColor: danger ? theme.colors.danger : theme.colors.borderSubtle, backgroundColor: theme.colors.surface }}>
+      <Text style={{ ...typeStyle(theme, 'button'), color: danger ? theme.colors.danger : theme.colors.textPrimary, textAlign: 'center' }}>{label}</Text>
+    </Pressable>
   );
 }
 

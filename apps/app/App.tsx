@@ -12,7 +12,7 @@ import { AppShell, MailStoreProvider } from '@mail/ui';
 import type { NewMessageAttachment, NewMessageSubmission } from '@mail/ui';
 import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
-import { ensureNotificationPermission } from './src/notifications';
+import { ensureNotificationPermission, registerPushNotifications } from './src/notifications';
 import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken, setGoogleAuthRevokedHandler } from './src/auth';
 import { restoreThemePreference } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
@@ -91,6 +91,7 @@ export default function App() {
     setAuthenticated(accounts.length > 0);
     setShowWebApp(!isPublicWeb || accounts.length > 0);
     if (accounts.length === 0) return;
+    void registerPushNotifications().catch((error) => console.error('Falha ao registrar notificações push.', error));
     void syncEngine.syncAll();
   }, [isPublicWeb]);
 
@@ -198,6 +199,7 @@ export default function App() {
     if (enabled && !(await ensureNotificationPermission())) {
       throw new Error('Permita notificações no dispositivo para ativá-las.');
     }
+    if (enabled) await registerPushNotifications();
     if (!DEMO_MODE) await setAccountNotifications(accountId, enabled);
     const account = store.accountFor(accountId);
     if (account !== undefined) store.actions.registerAccount({ ...account, notificationsEnabled: enabled });

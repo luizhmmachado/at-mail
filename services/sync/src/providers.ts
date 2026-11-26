@@ -111,6 +111,27 @@ export async function markGmailMessagesRead(
   )));
 }
 
+export async function moveGmailThreads(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  threadIds: readonly string[],
+  folder: 'inbox' | 'archived' | 'trash'
+): Promise<void> {
+  const token = await accessToken(db, config, userId, accountId);
+  const labels = folder === 'inbox'
+    ? { addLabelIds: ['INBOX'], removeLabelIds: ['TRASH'] }
+    : folder === 'archived'
+      ? { removeLabelIds: ['INBOX'] }
+      : { addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] };
+  await Promise.all([...new Set(threadIds)].map((threadId) => googleJsonRequest(
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}/modify`,
+    token,
+    { method: 'POST', body: JSON.stringify(labels) }
+  )));
+}
+
 const EMAIL_ADDRESS_PATTERN = /^[^\s@,;<>()[\]\\"]+@[^\s@,;<>()[\]\\"]+\.[^\s@,;<>()[\]\\"]+$/;
 
 /** Validação de destinatário usada tanto na API quanto na montagem do MIME. */

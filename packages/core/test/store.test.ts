@@ -546,6 +546,40 @@ describe('ação de excluir', () => {
   });
 });
 
+describe('pastas e seleção de e-mails', () => {
+  it('mantém o estado de sincronização concluída ao abrir uma pasta vazia', () => {
+    const store = storeWithSeed();
+    store.actions.setSyncState({ status: 'syncing', lastSyncedAt: 1_700_000_000_000 });
+    store.actions.setEmailFolder('trash');
+    assert.equal(store.getFeed().threads.length, 0);
+    assert.equal(store.getSnapshot().sync.lastSyncedAt, 1_700_000_000_000);
+  });
+
+  it('separa caixa, arquivados e lixeira', () => {
+    const store = storeWithSeed();
+    const thread = store.getFeed().threads.find((item) => item.channel === 'email');
+    assert.ok(thread !== undefined);
+    store.actions.archiveThread(thread.id);
+    assert.equal(store.getFeed().threads.some((item) => item.id === thread.id), false);
+    store.actions.setEmailFolder('archived');
+    assert.equal(store.getFeed().threads.some((item) => item.id === thread.id), true);
+    assert.ok(store.getFeed().threads.every((item) => item.channel === 'email' && item.emailFolder === 'archived'));
+  });
+
+  it('seleciona somente e-mails em lote e limpa ao trocar de filtro', () => {
+    const store = storeWithSeed();
+    store.actions.setChannel('all');
+    store.actions.setSelectingThreads(true);
+    store.actions.selectAllThreads();
+    const selected = store.getSnapshot().ui.selectedThreadIds;
+    assert.ok(selected.length > 0);
+    assert.ok(selected.every((id) => store.getThread(id)?.channel === 'email'));
+    store.actions.setEmailFolder('trash');
+    assert.deepEqual(store.getSnapshot().ui.selectedThreadIds, []);
+    assert.equal(store.getSnapshot().ui.selectingThreads, false);
+  });
+});
+
 describe('mensagens', () => {
   it('upsert deduplica por id', () => {
     const store = storeWithSeed();

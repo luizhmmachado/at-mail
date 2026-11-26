@@ -65,6 +65,23 @@ export async function setThreadStarred(message: EmailMessage, isStarred: boolean
   if (!response.ok) throw new Error(await messageResponseError(response));
 }
 
+export async function moveEmailThreads(messages: readonly EmailMessage[], folder: 'inbox' | 'archived' | 'trash'): Promise<void> {
+  const byAccount = new Map<string, Set<string>>();
+  for (const message of messages) {
+    const threadIds = byAccount.get(message.accountId) ?? new Set<string>();
+    threadIds.add(message.providerThreadId);
+    byAccount.set(message.accountId, threadIds);
+  }
+  await Promise.all(Array.from(byAccount, async ([accountId, threadIds]) => {
+    const response = await apiFetch('/messages/move', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountId, threadIds: [...threadIds], folder })
+    });
+    if (!response.ok) throw new Error(await messageResponseError(response));
+  }));
+}
+
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
   const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
   const chatMessages = messages.filter((message): message is ChatMessage => message.channel === 'chat');

@@ -104,7 +104,24 @@ até 10 arquivos, com 3 MB no total.
 
 Para builds locais, defina ambos antes de `npm run web` / `expo prebuild`.
 
-## 6. Checklist de teste (uma conta nunca usada no app)
+## 6. Notificações push mobile
+
+O APK registra um token Expo autenticado em `/accounts/push-token`. O worker `/api/push/cron`
+consulta Gmail e Google Chat a cada cinco minutos, deduplica mensagens por usuário/conta e
+envia o push pelo Expo Push Service.
+
+Para produzir um APK apto a receber push com o app fechado:
+
+1. configure um app Android no Firebase com o pacote `app.atmail.client`;
+2. salve `google-services.json` em `apps/app/google-services.json`;
+3. envie a chave FCM v1 ao projeto Expo EAS `ae3fd8e1-4744-4fcf-8623-a1a63cb6646d`;
+4. configure `CRON_SECRET` na Vercel e mantenha a regra de cron ativa;
+5. instale um APK novo e conceda a permissão de notificações.
+
+Os arquivos `google-services.json` e `GoogleService-Info.plist` estão ignorados pelo Git.
+Nunca publique chaves privadas ou arquivos de conta de serviço no repositório.
+
+## 7. Checklist de teste (uma conta nunca usada no app)
 
 1. Publicar a tela de consentimento (passo 1).
 2. Abrir o app **web** e clicar em *Continuar com Google*: consentimento no navegador →

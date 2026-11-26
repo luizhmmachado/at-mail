@@ -5,8 +5,9 @@ import { decrypt, encrypt, hashToken, matchesPkceChallenge, opaqueToken } from '
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser, revokeToken, SyncError } from './google.js';
 import { body, cors, html, json, PayloadTooLargeError } from './http.js';
-import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
+import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, moveGmailThreads, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault, type VaultRecord } from './vault.js';
+import { runMobilePushPoll } from './push.js';
 
 export interface AppServer { handler(req: IncomingMessage, res: ServerResponse): Promise<void>; close(): Promise<void> }
 
@@ -39,6 +40,13 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
       const headers = { ...cors(config.publicOrigins, requestOrigin), 'cache-control': 'no-store' };
       if (req.method === 'OPTIONS') return json(res, 204, null, headers);
       try {
+        if ((req.method === 'POST' || req.method === 'GET') && (url.pathname === '/push/cron' || url.pathname === '/api/push/cron')) {
+          const authorization = req.headers.authorization ?? '';
+          if (!config.pushCronSecret || authorization !== `Bearer ${config.pushCronSecret}`) {
+            return json(res, 401, { error: 'cron não autorizado' }, headers);
+          }
+          return json(res, 200, await runMobilePushPoll(db, config), headers);
+        }
         // Inicia um login e registra o `state` + `code_challenge` no servidor. O
         // exchange só aceita um state criado aqui, com o code e o verifier certos.
         if (req.method === 'POST' && (url.pathname === '/auth/google/start' || url.pathname === '/api/auth/google/start')) {
@@ -214,6 +222,26 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           await db.query('INSERT INTO atmail_notification_preferences (user_id, account_id, enabled, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT(user_id, account_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at', [userId, accountId, input.enabled, Date.now()]);
           return json(res, 200, { updated: true }, headers);
         }
+        if (req.method === 'POST' && (url.pathname === '/accounts/push-token' || url.pathname === '/api/accounts/push-token')) {
+          const input = await body(req);
+          const token = String(input.token ?? '');
+          const platform = String(input.platform ?? '');
+          if (!/^(?:ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/.test(token) || !['android', 'ios'].includes(platform)) {
+            return json(res, 400, { error: 'token push ou plataforma inválidos' }, headers);
+          }
+          const now = Date.now();
+          await db.query(
+            'INSERT INTO atmail_push_tokens (token, user_id, platform, created_at, updated_at) VALUES ($1, $2, $3, $4, $4) ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, platform = excluded.platform, updated_at = excluded.updated_at',
+            [token, userId, platform, now]
+          );
+          return json(res, 200, { registered: true }, headers);
+        }
+        if (req.method === 'DELETE' && (url.pathname === '/accounts/push-token' || url.pathname === '/api/accounts/push-token')) {
+          const input = await body(req);
+          const token = String(input.token ?? '');
+          await db.query('DELETE FROM atmail_push_tokens WHERE token = $1 AND user_id = $2', [token, userId]);
+          return json(res, 200, { removed: true }, headers);
+        }
         const accountMatch = url.pathname.match(/^(?:\/api)?\/accounts\/([^/]+)$/);
         if (req.method === 'DELETE' && accountMatch) {
           const accountId = decodeURIComponent(accountMatch[1] ?? '');
@@ -272,6 +300,23 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const messageIds = Array.isArray(input.messageIds) ? input.messageIds.map(String) : [];
           await markGmailMessagesRead(db, config, userId, accountId, messageIds, input.isRead !== false);
           return json(res, 200, { updated: messageIds.length }, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/messages/move' || url.pathname === '/api/messages/move')) {
+          const input = await body(req);
+          const accountId = String(input.accountId ?? '');
+          const folder = input.folder;
+          const threadIds = Array.isArray(input.threadIds)
+            ? input.threadIds.map(String)
+            : [];
+          if (
+            (folder !== 'inbox' && folder !== 'archived' && folder !== 'trash') ||
+            threadIds.length === 0 ||
+            threadIds.some((threadId) => !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
+          ) return json(res, 400, { error: 'pasta ou conversas inválidas' }, headers);
+          const account = (await db.query<{ provider: string; channel: string }>('SELECT provider, channel FROM atmail_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])).rows[0];
+          if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
+          await moveGmailThreads(db, config, userId, accountId, threadIds, folder);
+          return json(res, 200, { updated: threadIds.length }, headers);
         }
         if (req.method === 'POST' && (url.pathname === '/messages/read-chat' || url.pathname === '/api/messages/read-chat')) {
           const input = await body(req);

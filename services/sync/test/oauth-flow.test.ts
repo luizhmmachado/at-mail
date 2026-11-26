@@ -399,6 +399,29 @@ describe('sincronização do Gmail', () => {
     assert.equal(url.searchParams.has('pageToken'), false);
   });
 
+  it('move conversas entre caixa, arquivados e lixeira em lote', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    const changes: { url: string; body: any }[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+      changes.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return Response.json({});
+    });
+    const app = await createAppServer(config, db);
+    const move = (folder: string) => call(app, 'POST', '/messages/move', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({ accountId: 'gmail-1', threadIds: ['thread-1', 'thread-2'], folder }));
+    assert.equal((await move('archived')).status, 200);
+    assert.equal((await move('trash')).status, 200);
+    assert.equal((await move('inbox')).status, 200);
+    assert.equal((await move('spam')).status, 400);
+    assert.ok(changes.every((change) => change.url.endsWith('/modify')));
+    assert.deepEqual(changes.slice(0, 2).map((change) => change.body), [
+      { removeLabelIds: ['INBOX'] },
+      { removeLabelIds: ['INBOX'] }
+    ]);
+  });
+
   it('consulta historyId e deduplica as mensagens adicionadas', () => {
     const url = new URL(gmailHistoryUrl('12345', 'next-page'));
     assert.equal(url.searchParams.get('startHistoryId'), '12345');
@@ -492,11 +515,13 @@ function createFakeDb(): {
   accounts: Map<string, { userId: string; contextId: string; provider?: string; channel?: string; email?: string }>;
   notifications: Map<string, boolean>;
   credentials: Set<string>;
+  pushTokens: Map<string, { userId: string; platform: string }>;
 } {
   const rows = new Map<string, PendingRow>();
   const accounts = new Map<string, { userId: string; contextId: string; provider?: string; channel?: string; email?: string }>();
   const notifications = new Map<string, boolean>();
   const credentials = new Set<string>();
+  const pushTokens = new Map<string, { userId: string; platform: string }>();
   const attempts = new Map<string, { windowStart: number; count: number }>();
 
   let db: Db;
@@ -582,6 +607,16 @@ function createFakeDb(): {
         notifications.set(`${userId}:${accountId}`, enabled);
         return { rows: [] };
       }
+      if (text.startsWith('INSERT INTO atmail_push_tokens')) {
+        const [token, userId, platform] = values as [string, string, string];
+        pushTokens.set(token, { userId, platform });
+        return { rows: [] };
+      }
+      if (text.startsWith('DELETE FROM atmail_push_tokens')) {
+        const [token, userId] = values as [string, string];
+        if (pushTokens.get(token)?.userId === userId) pushTokens.delete(token);
+        return { rows: [] };
+      }
       if (text.startsWith('DELETE FROM atmail_notification_preferences')) {
         notifications.delete(`${String(values[0])}:${String(values[1])}`);
         return { rows: [] };
@@ -641,7 +676,7 @@ function createFakeDb(): {
     close: async () => undefined
   };
 
-  return { db, rows, accounts, notifications, credentials };
+  return { db, rows, accounts, notifications, credentials, pushTokens };
 }
 
 interface ResponseSnapshot {
@@ -774,6 +809,19 @@ describe('fluxo OAuth do backend', () => {
 
     assert.equal(response.status, 200);
     assert.equal(notifications.get('user-1:gmail-account'), false);
+    await app.close();
+  });
+
+  it('registra e remove token push apenas para o usuário autenticado', async () => {
+    const { db, pushTokens } = createFakeDb();
+    const app = await createAppServer(config, db);
+    const token = 'ExponentPushToken[valid_token-123]';
+    const registered = await call(app, 'POST', '/accounts/push-token', '10.0.0.21', undefined, 'Bearer test-session', JSON.stringify({ token, platform: 'android' }));
+    assert.equal(registered.status, 200);
+    assert.deepEqual(pushTokens.get(token), { userId: 'user-1', platform: 'android' });
+    const removed = await call(app, 'DELETE', '/accounts/push-token', '10.0.0.21', undefined, 'Bearer test-session', JSON.stringify({ token }));
+    assert.equal(removed.status, 200);
+    assert.equal(pushTokens.has(token), false);
     await app.close();
   });
 

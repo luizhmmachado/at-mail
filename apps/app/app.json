@@ -3,7 +3,7 @@
     "name": "@mail",
     "slug": "at-mail",
     "scheme": "atmail",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "icon": "./assets/icon.png",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
@@ -14,7 +14,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.atmail.client",
-      "buildNumber": "18",
+      "buildNumber": "19",
       "icon": {
         "light": "./assets/icon.png",
         "dark": "./assets/icon-dark.png"
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "app.atmail.client",
-      "versionCode": 18,
+      "versionCode": 19,
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -55,7 +55,11 @@
       "typedRoutes": false
     },
     "extra": {
-      "syncApiUrl": "http://localhost:8790"
-    }
+      "syncApiUrl": "http://localhost:8790",
+      "eas": {
+        "projectId": "ae3fd8e1-4744-4fcf-8623-a1a63cb6646d"
+      }
+    },
+    "owner": "bdway"
   }
 }

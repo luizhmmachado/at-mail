@@ -52,6 +52,7 @@ export interface FeedQuery {
   sentOnly?: boolean;
   unreadOnly?: boolean;
   starredOnly?: boolean;
+  folder?: 'inbox' | 'archived' | 'trash';
 }
 
 export interface FeedResult {
@@ -282,7 +283,11 @@ function isVisible(thread: UnifiedThread, query: FeedQuery): boolean {
   if (query.starredOnly === true && (thread.channel !== 'email' || !thread.flags.isStarred)) return false;
   if (query.query.trim().length > 0 && !matchesQuery(thread, query.query)) return false;
 
-  if (query.sentOnly === true) {
+  if (query.folder === 'archived') {
+    if (thread.channel !== 'email' || thread.emailFolder !== 'archived') return false;
+  } else if (query.folder === 'trash') {
+    if (thread.channel !== 'email' || thread.emailFolder !== 'trash') return false;
+  } else if (query.sentOnly === true) {
     if (!thread.flags.hasSent) return false;
   } else {
     const isArchived = thread.emailFolder === ARCHIVED_FOLDER;
