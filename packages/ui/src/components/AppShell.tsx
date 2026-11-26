@@ -268,7 +268,7 @@ function MobileNav({ active, onCompose }: { active: 'all' | 'email' | 'chat'; on
     >
       <NavItem
         name="inbox"
-        label="Caixa"
+        label="Inbox"
         active={active !== 'chat'}
         onPress={() => actions.setChannel('email')}
       />
@@ -280,7 +280,7 @@ function MobileNav({ active, onCompose }: { active: 'all' | 'email' | 'chat'; on
       />
       <NavItem
         name="compose"
-        label="Escrever"
+        label="Compose"
         active={false}
         onPress={onCompose}
       />

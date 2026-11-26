@@ -61,9 +61,7 @@ export function ThreadRow({
   const contentInset = mobile ? theme.layout.mobileRowContentInset : theme.layout.rowContentInset;
   const inset = theme.layout.rowDotInset;
 
-  const background = selectedForAction
-    ? theme.colors.accentMuted
-    : selected
+  const background = selected
     ? theme.colors.surfaceSelected
     : hovered
       ? theme.colors.surfaceHover
@@ -102,6 +100,31 @@ export function ThreadRow({
         />
       )}
 
+      {selectionMode && (
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selectedForAction }}
+          accessibilityLabel={selectedForAction ? 'Remover e-mail da seleção' : 'Selecionar e-mail'}
+          onPress={onToggleSelection}
+          style={{
+            position: 'absolute',
+            zIndex: 2,
+            left: mobile ? 13 : 11,
+            top: (mobile ? theme.layout.mobileRowHeight : theme.layout.rowHeight) / 2 - 9,
+            width: 18,
+            height: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1.5,
+            borderColor: selectedForAction ? theme.colors.accent : theme.colors.borderStrong,
+            borderRadius: 5,
+            backgroundColor: selectedForAction ? theme.colors.accent : 'transparent'
+          }}
+        >
+          {selectedForAction && <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+        </Pressable>
+      )}
+
       <View
         style={{
           paddingLeft: mobile ? inset : inset,
@@ -111,27 +134,7 @@ export function ThreadRow({
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          {selectionMode ? (
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: selectedForAction }}
-              accessibilityLabel={selectedForAction ? 'Remover e-mail da seleção' : 'Selecionar e-mail'}
-              onPress={onToggleSelection}
-              style={{
-                width: 18,
-                height: 18,
-                marginRight: contentInset - inset - 18,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderWidth: 1.5,
-                borderColor: selectedForAction ? theme.colors.accent : theme.colors.borderStrong,
-                borderRadius: 5,
-                backgroundColor: selectedForAction ? theme.colors.accent : 'transparent'
-              }}
-            >
-              {selectedForAction && <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
-            </Pressable>
-          ) : <View style={{ width: contentInset - inset }} />}
+          <View style={{ width: contentInset - inset }} />
           {chatAvatarUrl !== undefined && (
             <Image
               accessibilityLabel={`Foto de ${threadParticipantsLabel(thread, 1)}`}
@@ -229,14 +232,16 @@ export function ThreadRow({
         />
       )}
     </Pressable>
-    {thread.channel === 'email' && !selectionMode && mobile && (
+    {thread.channel === 'email' && mobile && !selectionMode && thread.emailFolder !== 'inbox' && (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Ações para ${thread.subject}`}
-        onPress={onOpenActions}
-        style={{ position: 'absolute', top: 34, right: 20, padding: 4 }}
+        accessibilityLabel={thread.emailFolder === 'trash' ? 'Restaurar e-mail' : 'Mover e-mail para a caixa de entrada'}
+        onPress={() => actions.restoreThread(thread.id)}
+        style={{ position: 'absolute', right: theme.layout.mobilePaddingX, top: 42, minHeight: 28, justifyContent: 'center' }}
       >
-        <Glyph name="dots" size={17} color={theme.colors.textSecondary} />
+        <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>
+          {thread.emailFolder === 'trash' ? 'Restore' : 'Move to inbox'}
+        </Text>
       </Pressable>
     )}
     {thread.channel === 'email' && !selectionMode && (
@@ -249,7 +254,7 @@ export function ThreadRow({
         style={{
           position: 'absolute',
           top: mobile ? 35 : 29,
-          right: mobile ? 48 : (theme.layout.rowPaddingX + (unread ? 13 : 0)),
+          right: mobile ? theme.layout.mobilePaddingX + (unread ? 13 : 0) : (theme.layout.rowPaddingX + (unread ? 13 : 0)),
           padding: 3
         }}
       >

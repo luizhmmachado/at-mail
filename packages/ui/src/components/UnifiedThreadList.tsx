@@ -47,14 +47,14 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
   const mobile = fullScreen;
   const title =
     snapshot.view.emailFolder === 'archived'
-      ? 'Arquivados'
+      ? 'Archived'
       : snapshot.view.emailFolder === 'trash'
-      ? 'Lixeira'
+      ? 'Trash'
       : snapshot.view.starredOnly
-      ? 'Favoritos'
+      ? 'Favorites'
       : snapshot.view.contextId === 'all'
-      ? 'Todas as caixas'
-      : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'Todas as caixas');
+      ? 'All Inboxes'
+      : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'All Inboxes');
   const selectionMode = snapshot.ui.selectingThreads;
   const selectedCount = snapshot.ui.selectedThreadIds.length;
 
@@ -78,8 +78,8 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Contexto atual: ${title}. Abrir seletor de contexto.`}
-            onPress={() => setMenuOpen((open) => !open)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: mobile ? 10 : 9 }}
+            onPress={selectionMode ? undefined : () => setMenuOpen((open) => !open)}
+            style={{ flex: mobile ? 1 : undefined, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: mobile ? 10 : 9 }}
           >
             <Text
               numberOfLines={1}
@@ -88,21 +88,27 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                 color: theme.colors.textPrimary
               }}
             >
-              {selectionMode ? `${selectedCount} ${selectedCount === 1 ? 'selecionado' : 'selecionados'}` : title}
+              {mobile && selectionMode ? `${selectedCount} selected` : title}
             </Text>
-            <Glyph name="chevron-down" size={mobile ? 20 : 18} color={theme.colors.textSecondary} />
+            {!selectionMode && <Glyph name="chevron-down" size={mobile ? 20 : 18} color={theme.colors.textSecondary} />}
           </Pressable>
 
-          <View style={{ flex: 1 }} />
+          {!mobile && <View style={{ flex: 1 }} />}
 
-          {selectionMode && (
-            <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
-              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Cancelar</Text>
+          {selectionMode && mobile && (
+            <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection} style={{ position: 'relative', zIndex: 2 }}>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Clear</Text>
+            </Pressable>
+          )}
+
+          {!selectionMode && snapshot.view.channel !== 'chat' && mobile && (
+            <Pressable accessibilityRole="button" accessibilityLabel="Selecionar e-mails" onPress={() => actions.setSelectingThreads(true)} style={{ position: 'relative', zIndex: 2 }}>
+              <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Select</Text>
             </Pressable>
           )}
 
           {mobile ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[4] }}>
+            <View style={{ position: 'relative', zIndex: 2, flexDirection: 'row', alignItems: 'center', gap: theme.space[4] }}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Buscar em todas as contas"
@@ -111,16 +117,6 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
               >
                 <Glyph name="search" size={22} color={theme.colors.textPrimary} />
               </Pressable>
-              {onOpenSettings !== undefined && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Abrir configurações"
-                  onPress={onOpenSettings}
-                  style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Glyph name="settings" size={20} color={theme.colors.textPrimary} />
-                </Pressable>
-              )}
             </View>
           ) : (
             <Pressable
@@ -178,16 +174,6 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
           <ChannelTabs feed={feed} variant={mobile ? 'mobile' : 'desktop'} />
         </View>
         <FolderTabs />
-        {!selectionMode && snapshot.view.channel !== 'chat' && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Selecionar e-mails"
-            onPress={() => actions.setSelectingThreads(true)}
-            style={{ position: mobile ? 'relative' : 'absolute', alignSelf: mobile ? 'flex-end' : undefined, right: mobile ? undefined : theme.space[4], top: mobile ? undefined : 78, marginTop: mobile ? 8 : 0, paddingVertical: 4 }}
-          >
-            <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar</Text>
-          </Pressable>
-        )}
       </View>
 
       <SectionList<UnifiedThread, { title: string; data: UnifiedThread[] }>
@@ -197,6 +183,7 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
         stickySectionHeadersEnabled={false}
         showsVerticalScrollIndicator={false}
         renderSectionHeader={({ section }) => {
+          if (selectionMode && section !== sections[0]) return null;
           const unread = section.data.reduce((sum, thread) => sum + thread.unreadCount, 0);
           return (
             <View
@@ -217,16 +204,30 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
                   textTransform: 'uppercase'
                 }}
               >
-                {section.title}
+                {selectionMode
+                  ? mobile ? 'Tap emails to select' : `${selectedCount} selected`
+                  : mobile && section === sections[0] ? 'Hold an email for actions' : section.title}
               </Text>
-              {unread > 0 && (
+              {unread > 0 && !selectionMode && (
                 <Text style={{ ...typeStyle(theme, 'sectionMeta'), color: theme.colors.textSecondary }}>
-                  {unread} não {unread === 1 ? 'lida' : 'lidas'}
+                  {unread} unread
                 </Text>
               )}
-              {selectionMode && !mobile && section === sections[0] && (
-                <Pressable accessibilityRole="button" onPress={actions.selectAllThreads}>
-                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Selecionar todos</Text>
+              {selectionMode && section === sections[0] && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space[3] }}>
+                  {mobile && (
+                    <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Emails only</Text>
+                  )}
+                  {!mobile && (
+                    <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
+                      <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Clear</Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
+              {!selectionMode && section === sections[0] && !mobile && snapshot.view.channel !== 'chat' && (
+                <Pressable accessibilityRole="button" onPress={() => actions.setSelectingThreads(true)}>
+                  <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.accent }}>Select emails</Text>
                 </Pressable>
               )}
             </View>
@@ -260,12 +261,12 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
               <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: theme.space[2] }}>
                 {actionThread.participants[0]?.name ?? 'E-mail'}
               </Text>
-              <ActionSheetButton label={actionThread.unreadCount > 0 ? 'Marcar como lido' : 'Marcar como não lido'} onPress={() => { actions.markThreadRead(actionThread.id, actionThread.unreadCount > 0); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} onPress={() => { void actions.toggleThreadStar(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.emailFolder === 'inbox' ? 'Arquivar e-mail' : 'Mover para a caixa de entrada'} onPress={() => { actionThread.emailFolder === 'inbox' ? actions.archiveThread(actionThread.id) : actions.restoreThread(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label={actionThread.emailFolder === 'trash' ? 'Mover para a caixa de entrada' : 'Mover para a lixeira'} danger={actionThread.emailFolder !== 'trash'} onPress={() => { actionThread.emailFolder === 'trash' ? actions.restoreThread(actionThread.id) : actions.trashThread(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label="Selecionar e-mail" onPress={() => { actions.toggleThreadSelection(actionThread.id); setActionThread(undefined); }} />
-              <ActionSheetButton label="Cancelar" onPress={() => setActionThread(undefined)} />
+              <ActionSheetButton label={actionThread.unreadCount > 0 ? 'Mark as read' : 'Mark as unread'} onPress={() => { actions.markThreadRead(actionThread.id, actionThread.unreadCount > 0); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.flags.isStarred ? 'Remove from favorites' : 'Add to favorites'} onPress={() => { void actions.toggleThreadStar(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'inbox' ? 'Archive email' : 'Move to inbox'} onPress={() => { actionThread.emailFolder === 'inbox' ? actions.archiveThread(actionThread.id) : actions.restoreThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label={actionThread.emailFolder === 'trash' ? 'Move to inbox' : 'Move to trash'} danger={actionThread.emailFolder !== 'trash'} onPress={() => { actionThread.emailFolder === 'trash' ? actions.restoreThread(actionThread.id) : actions.trashThread(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Select email" onPress={() => { actions.toggleThreadSelection(actionThread.id); setActionThread(undefined); }} />
+              <ActionSheetButton label="Cancel" onPress={() => setActionThread(undefined)} />
             </Pressable>
           </Pressable>
         )}
@@ -338,9 +339,9 @@ function FolderTabs(): ReactElement {
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const folders = [
-    ['inbox', 'Caixa'],
-    ['archived', 'Arquivados'],
-    ['trash', 'Lixeira']
+    ['inbox', 'Inbox'],
+    ['archived', 'Archived'],
+    ['trash', 'Trash']
   ] as const;
   return (
     <View accessibilityRole="tablist" style={{ flexDirection: 'row', height: 38, marginTop: 6, borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
@@ -384,14 +385,14 @@ function BulkActionBar(): ReactElement {
   return (
     <View style={{ paddingHorizontal: theme.space[3], paddingTop: theme.space[2], paddingBottom: theme.space[1], borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.borderSubtle, backgroundColor: theme.colors.surface }}>
       <Text style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary, marginBottom: 4 }}>
-        Aplicar a {count} {count === 1 ? 'e-mail' : 'e-mails'}
+        Apply to {count} {count === 1 ? 'email' : 'emails'}
       </Text>
       <View style={{ flexDirection: 'row' }}>
-        <BulkAction label="Lido" onPress={() => apply('read')} />
-        <BulkAction label="Não lido" onPress={() => apply('unread')} />
-        <BulkAction label="Favorito" onPress={() => apply('favorite')} />
-        <BulkAction label="Arquivar" onPress={() => apply('archive')} />
-        <BulkAction label="Excluir" danger onPress={() => apply('trash')} />
+        <BulkAction label="Mark read" onPress={() => apply('read')} />
+        <BulkAction label="Mark unread" onPress={() => apply('unread')} />
+        <BulkAction label="Favorite" onPress={() => apply('favorite')} />
+        <BulkAction label="Archive" onPress={() => apply('archive')} />
+        <BulkAction label="Delete" danger onPress={() => apply('trash')} />
       </View>
     </View>
   );
@@ -462,14 +463,14 @@ function EmptyState({ query, loading }: { query: string; loading: boolean }): Re
     <View style={{ padding: theme.space[6], gap: theme.space[2] }}>
       {loading && <ActivityIndicator accessibilityLabel="Carregando mensagens" color={theme.colors.accent} />}
       <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
-        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado' : 'Caixa livre'}
+        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado'         : 'Inbox clear'}
       </Text>
       <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
         {loading
           ? 'Buscando suas mensagens e conversas.'
           : query.length > 0
           ? `Nenhuma conversa corresponde a “${query}”. Tente from:, context: ou in:chat.`
-          : 'Nenhuma conversa neste contexto ou pasta. Ao chegar algo novo, aparece aqui.'}
+          : 'No conversations in this context or folder.'}
       </Text>
     </View>
   );

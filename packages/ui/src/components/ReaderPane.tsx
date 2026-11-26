@@ -187,11 +187,12 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
         {canModifyEmail && (
           <>
             <IconButton
-              name="archive"
-              label={isArchived ? 'Arquivada' : 'Arquivar'}
-              onPress={() => actions.archiveThread(thread.id)}
+              name={isArchived || thread.emailFolder === 'trash' ? 'inbox' : 'archive'}
+              label={isArchived ? 'Move to inbox' : thread.emailFolder === 'trash' ? 'Restore to inbox' : 'Archive'}
+              tooltip={!mobile}
+              onPress={() => isArchived || thread.emailFolder === 'trash' ? actions.restoreThread(thread.id) : actions.archiveThread(thread.id)}
             />
-            <IconButton name="trash" label="Excluir" onPress={() => actions.trashThread(thread.id)} />
+            {thread.emailFolder !== 'trash' && <IconButton name="trash" label="Excluir" tooltip={!mobile} onPress={() => actions.trashThread(thread.id)} />}
             <View
               style={{
                 width: theme.border.hairline,
@@ -202,7 +203,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
           </>
         )}
 
-        <IconButton name="clock" label="Adiar e marcar como não lida" onPress={() => actions.markThreadRead(thread.id, false)} />
+        <IconButton name="clock" label="Adiar e marcar como não lida" tooltip={!mobile} onPress={() => actions.markThreadRead(thread.id, false)} />
 
         {canModifyEmail && (
           <IconButton
@@ -210,6 +211,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             label={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
             active={thread.flags.isStarred}
             disabled={snapshot.ui.pendingStarThreadIds.includes(thread.id)}
+            tooltip={!mobile}
             onPress={() => void actions.toggleThreadStar(thread.id)}
           />
         )}
@@ -221,8 +223,8 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             {position + 1} de {feed.threads.length}
           </Text>
         )}
-        <IconButton name="chevron-up" label="Conversa anterior" onPress={() => actions.moveSelection(-1)} />
-        <IconButton name="chevron-down" label="Próxima conversa" onPress={() => actions.moveSelection(1)} />
+        <IconButton name="chevron-up" label="Conversa anterior" tooltip={!mobile} onPress={() => actions.moveSelection(-1)} />
+        <IconButton name="chevron-down" label="Próxima conversa" tooltip={!mobile} onPress={() => actions.moveSelection(1)} />
       </View>
 
       {isChatThread && (
@@ -328,7 +330,23 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
           backgroundColor: theme.colors.surface
         }}
       >
-        <View
+        {thread.emailFolder === 'trash' ? (
+          <View
+            style={{
+              minHeight: 58,
+              paddingHorizontal: 18,
+              justifyContent: 'center',
+              borderRadius: theme.radius.xxl,
+              backgroundColor: theme.colors.surfaceSunken,
+              borderWidth: theme.border.hairline,
+              borderColor: theme.colors.borderSubtle
+            }}
+          >
+            <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
+              This email is in trash. Restore it to reply.
+            </Text>
+          </View>
+        ) : <View
           style={{
             minHeight: theme.layout.composerMinHeight,
             padding: 18,
@@ -412,8 +430,9 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
             })}
           </View>}
           {attachments.map((attachment, index) => <Pressable key={`${attachment.fileName}-${index}`} accessibilityRole="button" accessibilityLabel={`Remover ${attachment.fileName}`} onPress={() => setAttachmentsByDraft((current) => ({ ...current, [draftKey]: attachments.filter((_, itemIndex) => itemIndex !== index) }))}><Text numberOfLines={1} style={{ ...typeStyle(theme, 'composeHint'), color: theme.colors.textSecondary }}>{attachment.fileName} · Remover</Text></Pressable>)}
-        </View>
+        </View>}
 
+        {thread.emailFolder !== 'trash' && (
         <Text
           style={{
             ...typeStyle(theme, 'composeHint'),
@@ -423,6 +442,7 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
         >
           Respondendo de {accountEmails[0] ?? 'conta principal'}
         </Text>
+        )}
         {notice !== undefined && (
           <Text
             style={{
@@ -461,27 +481,27 @@ function BulkSelectionPane(): ReactElement {
     <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <View style={{ height: theme.layout.headerHeight, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space[8], borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
         <Text style={{ ...typeStyle(theme, 'readerMeta'), color: theme.colors.textPrimary }}>
-          {selected.length} {selected.length === 1 ? 'e-mail selecionado' : 'e-mails selecionados'}
+          {selected.length} {selected.length === 1 ? 'email selected' : 'emails selected'}
         </Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Cancelar seleção" onPress={actions.clearThreadSelection}>
-          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancelar</Text>
+          <Text style={{ ...typeStyle(theme, 'button'), color: theme.colors.textSecondary }}>Cancel</Text>
         </Pressable>
       </View>
       <View style={{ padding: theme.space[8], alignItems: 'center' }}>
-        <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>Organize sua caixa.</Text>
+        <Text style={{ ...typeStyle(theme, 'readerTitle'), color: theme.colors.textPrimary }}>A little less inbox.</Text>
         <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary, marginTop: theme.space[2] }}>
-          {selected.length === 0 ? 'Selecione um ou mais e-mails na lista.' : `Aplique uma ação aos ${selected.length} e-mails selecionados.`}
+          {selected.length === 0 ? 'Select one email or several using the checkboxes.' : `Apply an action to the ${selected.length === 1 ? 'selected email' : `${selected.length} selected emails`}.`}
         </Text>
         {selected.length > 0 && (
           <View style={{ width: '100%', maxWidth: 520, marginTop: theme.space[8], gap: theme.space[3] }}>
             <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
-              <BulkPaneAction label="Marcar como lidos" onPress={() => apply('read')} />
-              <BulkPaneAction label="Marcar como não lidos" onPress={() => apply('unread')} />
+              <BulkPaneAction label="Mark read" onPress={() => apply('read')} />
+              <BulkPaneAction label="Mark unread" onPress={() => apply('unread')} />
             </View>
             <View style={{ flexDirection: 'row', gap: theme.space[3] }}>
-              <BulkPaneAction label="Adicionar aos favoritos" onPress={() => apply('favorite')} />
-              <BulkPaneAction label="Arquivar" onPress={() => apply('archive')} />
-              <BulkPaneAction label="Mover para a lixeira" danger onPress={() => apply('trash')} />
+              <BulkPaneAction label="Favorite" onPress={() => apply('favorite')} />
+              <BulkPaneAction label="Archive" onPress={() => apply('archive')} />
+              <BulkPaneAction label="Move to trash" danger onPress={() => apply('trash')} />
             </View>
           </View>
         )}
@@ -504,25 +524,27 @@ function IconButton({
   label,
   onPress,
   active = false,
-  disabled = false
+  disabled = false,
+  tooltip = false
 }: {
   name: GlyphName;
   label: string;
   onPress: () => void;
   active?: boolean;
   disabled?: boolean;
+  tooltip?: boolean;
 }): ReactElement {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
   const [tooltipVisible, setTooltipVisible] = useState(false);
   useEffect(() => {
-    if (!hovered || Platform.OS !== 'web') {
+    if (!hovered || !tooltip || Platform.OS !== 'web') {
       setTooltipVisible(false);
       return;
     }
     const timeout = setTimeout(() => setTooltipVisible(true), ACTION_TOOLTIP_DELAY_MS);
     return () => clearTimeout(timeout);
-  }, [hovered]);
+  }, [hovered, tooltip]);
   return (
     <Pressable
       accessibilityRole="button"
