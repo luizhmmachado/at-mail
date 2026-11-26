@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { createAppStore, createSeedData } from '@mail/core';
 import { createLocalEmailMessage, formattedEmailBody, parseEmailSendReceipt } from '../src/email-send';
 import { appendClipboardImages } from '../../../packages/ui/src/components/clipboard-attachments';
@@ -46,7 +47,7 @@ describe('imagens de e-mail no mobile', () => {
     assert.match(webHtml, /target="_blank"/i);
   });
 
-  it('permite apenas o script de cliques conhecido no iframe web', () => {
+  it('permite apenas o script conhecido no iframe web', () => {
     assert.equal(createHash('sha256').update(EMAIL_LINK_BRIDGE_SCRIPT).digest('base64'), EMAIL_LINK_BRIDGE_HASH);
     assert.ok(emailContentSecurityPolicy(true, true).includes(`script-src 'sha256-${EMAIL_LINK_BRIDGE_HASH}'`));
     assert.doesNotMatch(emailContentSecurityPolicy(true), /script-src/);
@@ -54,6 +55,28 @@ describe('imagens de e-mail no mobile', () => {
     const web = JSON.parse(readFileSync(new URL('../../../vercel.json', import.meta.url), 'utf8'));
     assert.ok(desktop.app.security.csp.includes(`'sha256-${EMAIL_LINK_BRIDGE_HASH}'`));
     assert.ok(web.headers.some((entry: { headers: { key: string; value: string }[] }) => entry.headers.some((header) => header.key === 'Content-Security-Policy' && header.value.includes(`'sha256-${EMAIL_LINK_BRIDGE_HASH}'`))));
+  });
+
+  it('informa a altura do corpo ao carregar e quando seu tamanho muda', () => {
+    const listeners = new Map<string, () => void>();
+    const messages: { type: string; height: number }[] = [];
+    const body = { scrollHeight: 1200, getBoundingClientRect: () => ({ height: 1100 }) };
+    let resize: () => void = () => { throw new Error('Observador não registrado'); };
+    class ResizeObserver {
+      constructor(callback: () => void) { resize = callback; }
+      observe(element: unknown): void { assert.equal(element, body); }
+    }
+    runInNewContext(EMAIL_LINK_BRIDGE_SCRIPT, {
+      document: { body, addEventListener: (name: string, callback: () => void) => listeners.set(name, callback) },
+      window: { parent: { postMessage: (message: { type: string; height: number }) => messages.push(message) }, addEventListener: () => {} },
+      ResizeObserver
+    });
+    listeners.get('DOMContentLoaded')?.();
+    assert.deepEqual({ ...messages.at(-1) }, { type: 'atmail:email-height', height: 1200 });
+    body.scrollHeight = 400;
+    body.getBoundingClientRect = () => ({ height: 350 });
+    resize();
+    assert.deepEqual({ ...messages.at(-1) }, { type: 'atmail:email-height', height: 400 });
   });
 });
 

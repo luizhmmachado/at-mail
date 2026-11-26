@@ -910,6 +910,7 @@ function MessageBody({
   const theme = useTheme();
   const [imagePreferences, setImagePreferences] = useState<Record<string, boolean>>({});
   const [nativePreference, setNativePreference] = useState<{ sender: string; blocked: boolean }>();
+  const [emailHeight, setEmailHeight] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const sender = message.participants[0]?.email.trim().toLowerCase() ?? '';
   const preferenceKey = `atmail.images.blocked:${sender}`;
@@ -919,8 +920,12 @@ function MessageBody({
   useEffect(() => {
     if (Platform.OS !== 'web' || !hasEmailHtml) return;
     const onMessage = (event: MessageEvent): void => {
-      if (event.source !== iframeRef.current?.contentWindow || event.data?.type !== 'atmail:email-link' || typeof event.data?.url !== 'string') return;
-      void openMessageLink(event.data.url).catch((error) => console.error('Não foi possível abrir o link.', error));
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type === 'atmail:email-height' && typeof event.data.height === 'number' && Number.isFinite(event.data.height) && event.data.height >= 0) {
+        setEmailHeight(Math.max(1, event.data.height));
+      } else if (event.data?.type === 'atmail:email-link' && typeof event.data.url === 'string') {
+        void openMessageLink(event.data.url).catch((error) => console.error('Não foi possível abrir o link.', error));
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -951,12 +956,13 @@ function MessageBody({
       ref: iframeRef,
       title: `Corpo do e-mail: ${message.subject}`,
       sandbox: 'allow-scripts',
+      scrolling: 'no',
       referrerPolicy: 'no-referrer',
       srcDoc: html,
       style: {
         display: 'block',
         width: '100%',
-        height: role === 'readerBody' ? 560 : 260,
+        height: emailHeight,
         border: 0,
         backgroundColor: theme.colors.surface
       }
@@ -1031,7 +1037,7 @@ function emailDocument(bodyHtml: string, mode: 'light' | 'dark', surface: string
   const darkCanvas = mode === 'dark'
     ? `background-color:${surface}!important`
     : `background-color:${surface}`;
-  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="${emailContentSecurityPolicy(imagesAllowed, linkBridge)}"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;min-height:100%;${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${linkBridge ? `<script>${EMAIL_LINK_BRIDGE_SCRIPT}</script>` : ''}`;
+  const headContent = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${mode}"><meta http-equiv="Content-Security-Policy" content="${emailContentSecurityPolicy(imagesAllowed, linkBridge)}"><style>:root{color-scheme:${mode}}html,body{margin:0;max-width:100%;${linkBridge ? '' : 'min-height:100%;'}${darkCanvas};color:${text}}body{overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${linkBridge ? `<script>${EMAIL_LINK_BRIDGE_SCRIPT}</script>` : ''}`;
   const headOpen = /<head\b[^>]*>/i;
   const headClose = /<\/head\s*>/i;
   if (headOpen.test(themedBodyHtml)) return themedBodyHtml.replace(headOpen, (head) => `${head}${headContent}`);

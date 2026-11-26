@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'sha256-VoJVjU/Bbqe0LuEQmpvT/tGGBNcOlp2rjeyY/7gf0jw='; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://at-mail-sync-legacy.vercel.app http://localhost:8790 http://127.0.0.1:8790 https://www.googleapis.com https://gmail.googleapis.com https://chat.googleapis.com https://oauth2.googleapis.com",
+      "csp": "default-src 'self'; script-src 'self' 'sha256-quXF+kX72edqbJRq6SzHFyXXfX2gUq+i25QK9RHTnOA='; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://at-mail-sync-legacy.vercel.app http://localhost:8790 http://127.0.0.1:8790 https://www.googleapis.com https://gmail.googleapis.com https://chat.googleapis.com https://oauth2.googleapis.com",
       "dangerousDisableAssetCspModification": ["style-src"]
     }
   },

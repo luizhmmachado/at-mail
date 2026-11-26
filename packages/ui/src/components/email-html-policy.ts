@@ -1,8 +1,8 @@
 import { parse } from 'node-html-parser';
 
 export const NATIVE_EMAIL_BASE_URL = 'https://email.atmail.invalid/';
-export const EMAIL_LINK_BRIDGE_SCRIPT = "document.addEventListener('click',function(event){var element=event.target;while(element&&element.nodeType===1&&element.tagName!=='A')element=element.parentElement;if(!event.isTrusted||!element||!element.hasAttribute('href'))return;event.preventDefault();window.parent.postMessage({type:'atmail:email-link',url:element.getAttribute('href')},'*');},true);";
-export const EMAIL_LINK_BRIDGE_HASH = 'VoJVjU/Bbqe0LuEQmpvT/tGGBNcOlp2rjeyY/7gf0jw=';
+export const EMAIL_LINK_BRIDGE_SCRIPT = "document.addEventListener('click',function(event){var element=event.target;while(element&&element.nodeType===1&&element.tagName!=='A')element=element.parentElement;if(!event.isTrusted||!element||!element.hasAttribute('href'))return;event.preventDefault();window.parent.postMessage({type:'atmail:email-link',url:element.getAttribute('href')},'*');},true);document.addEventListener('DOMContentLoaded',function(){var body=document.body;function resize(){window.parent.postMessage({type:'atmail:email-height',height:Math.ceil(Math.max(body.scrollHeight,body.getBoundingClientRect().height))},'*');}new ResizeObserver(resize).observe(body);window.addEventListener('resize',resize);document.addEventListener('load',resize,true);resize();});";
+export const EMAIL_LINK_BRIDGE_HASH = 'quXF+kX72edqbJRq6SzHFyXXfX2gUq+i25QK9RHTnOA=';
 
 export function emailImagePreferenceKey(sender: string): string {
   return `atmail.images.${Array.from(sender.trim().toLowerCase(), (character) => character.codePointAt(0)!.toString(16)).join('.')}`;
