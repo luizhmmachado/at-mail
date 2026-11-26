@@ -201,16 +201,13 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
         <IconButton name="clock" label="Adiar e marcar como não lida" onPress={() => actions.markThreadRead(thread.id, false)} />
 
         {canModifyEmail && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-            accessibilityState={{ disabled: snapshot.ui.pendingStarThreadIds.includes(thread.id) }}
+          <IconButton
+            name="star"
+            label={thread.flags.isStarred ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+            active={thread.flags.isStarred}
             disabled={snapshot.ui.pendingStarThreadIds.includes(thread.id)}
             onPress={() => void actions.toggleThreadStar(thread.id)}
-            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.lg, backgroundColor: thread.flags.isStarred ? theme.colors.accentMuted : 'transparent' }}
-          >
-            <Glyph name="star" size={17} color={thread.flags.isStarred ? theme.colors.accent : theme.colors.textSecondary} fill={thread.flags.isStarred ? theme.colors.accent : 'none'} />
-          </Pressable>
+          />
         )}
 
         <View style={{ flex: 1 }} />
@@ -441,11 +438,15 @@ export function ReaderPane({ thread, onBack, onSend, onReactChat, onLoadChatImag
 function IconButton({
   name,
   label,
-  onPress
+  onPress,
+  active = false,
+  disabled = false
 }: {
   name: GlyphName;
   label: string;
   onPress: () => void;
+  active?: boolean;
+  disabled?: boolean;
 }): ReactElement {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
@@ -453,20 +454,28 @@ function IconButton({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       hitSlop={8}
       style={{
-        width: 18,
-        height: 18,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: theme.radius.sm,
-        backgroundColor: hovered ? theme.colors.surfaceHover : 'transparent'
+        backgroundColor: active ? theme.colors.accentMuted : hovered ? theme.colors.surfaceHover : 'transparent',
+        opacity: disabled ? 0.5 : 1
       }}
     >
-      <Glyph name={name} size={18} color={theme.colors.textSecondary} />
+      <Glyph
+        name={name}
+        size={18}
+        color={active ? theme.colors.accent : hovered ? theme.colors.textPrimary : theme.colors.textSecondary}
+        fill={name === 'star' && active ? theme.colors.accent : 'none'}
+      />
     </Pressable>
   );
 }

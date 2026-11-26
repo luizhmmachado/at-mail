@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { ActivityIndicator, BackHandler, Modal, Platform, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
 import type { Account, AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
@@ -46,6 +46,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
   const { width } = useWindowDimensions();
   const [mobilePane, setMobilePane] = useState<MobilePane>('list');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newMessageOpen, setNewMessageOpen] = useState(false);
 
   const isMobile = width < theme.layout.mobileBreakpoint;
 
@@ -56,13 +57,36 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
     [feed.threads, snapshot.view.selectedThreadId]
   );
 
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !isMobile) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (snapshot.ui.commandPaletteOpen) {
+        actions.toggleCommandPalette(false);
+        return true;
+      }
+      if (newMessageOpen) {
+        setNewMessageOpen(false);
+        return true;
+      }
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return true;
+      }
+      if (mobilePane === 'reader' && selectedThread !== undefined) {
+        setMobilePane('list');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [actions, isMobile, mobilePane, newMessageOpen, selectedThread, settingsOpen, snapshot.ui.commandPaletteOpen]);
+
   const handleSelect = (threadId: ThreadId): void => {
     onSelectThread(threadId);
     if (isMobile) setMobilePane('reader');
   };
 
   const openNewMessage = (): void => setNewMessageOpen(true);
-  const [newMessageOpen, setNewMessageOpen] = useState(false);
 
   if (isMobile) {
     const showReader = mobilePane === 'reader' && selectedThread !== undefined;
