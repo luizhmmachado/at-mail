@@ -390,7 +390,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
     removeMessages,
 
     markThreadRead(threadId: ThreadId, isRead = true): void {
-      const affected = snapshot.messages.filter((message) => groupingKey(message) === threadId);
+      const affected = snapshot.messages.filter((message) => groupingKey(message) === threadId && message.isRead !== isRead);
       if (affected.length === 0) return;
       patchMessagesById(
         affected.map((message) => message.id),

@@ -85,7 +85,7 @@ export async function moveEmailThreads(messages: readonly EmailMessage[], folder
 }
 
 export async function markMessagesRead(messages: readonly MailMessage[], isRead: boolean): Promise<void> {
-  const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email');
+  const emailMessages = messages.filter((message): message is EmailMessage => message.channel === 'email' && !message.id.includes(':optimistic:'));
   const chatMessages = messages.filter((message): message is ChatMessage => message.channel === 'chat');
   const byAccount = new Map<string, string[]>();
   for (const message of emailMessages) {
@@ -93,13 +93,19 @@ export async function markMessagesRead(messages: readonly MailMessage[], isRead:
     ids.push(message.id);
     byAccount.set(message.accountId, ids);
   }
-  const requests = Array.from(byAccount, ([accountId, messageIds]) => apiFetch('/messages/read', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, messageIds, isRead })
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`marcar leitura falhou (${response.status})`);
-  }));
+  const requests: Promise<void>[] = [];
+  for (const [accountId, allIds] of byAccount) {
+    for (let offset = 0; offset < allIds.length; offset += 1_000) {
+      const messageIds = allIds.slice(offset, offset + 1_000);
+      requests.push(apiFetch('/messages/read', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ accountId, messageIds, isRead })
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(`marcar leitura falhou (${response.status})`);
+      }));
+    }
+  }
   const bySpace = new Map<string, { accountId: string; spaceId: string; threadName?: string; messages: ChatMessage[] }>();
   for (const message of chatMessages) {
     const key = `${message.accountId}:${message.spaceId}:${message.threadName ?? 'space'}`;

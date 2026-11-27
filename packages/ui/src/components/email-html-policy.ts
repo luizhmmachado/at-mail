@@ -42,5 +42,20 @@ export function prepareEmailHtml(html: string, web = false): string {
     anchor.setAttribute('target', web ? '_blank' : '_self');
     anchor.setAttribute('rel', 'noopener noreferrer');
   }
+  for (const image of document.querySelectorAll('img')) {
+    const src = image.getAttribute('src')?.trim();
+    if (src !== undefined && /^cid:/i.test(src)) image.removeAttribute('src');
+  }
+  for (const element of document.querySelectorAll('[style]')) {
+    const style = element.getAttribute('style');
+    if (style !== undefined && /cid:/i.test(style)) {
+      element.setAttribute('style', style.replace(/url\(\s*(['"]?)cid:[^)'"]+\1\s*\)/gi, 'none'));
+    }
+  }
+  for (const styleTag of document.querySelectorAll('style')) {
+    if (/cid:/i.test(styleTag.textContent)) {
+      styleTag.set_content(styleTag.textContent.replace(/url\(\s*(['"]?)cid:[^)'"]+\1\s*\)/gi, 'none'));
+    }
+  }
   return document.toString();
 }

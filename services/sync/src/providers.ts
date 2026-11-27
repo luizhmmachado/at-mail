@@ -79,13 +79,21 @@ async function googleJson(url: string, token: string): Promise<any> {
 
 async function googleJsonRequest(url: string, token: string, init: RequestInit): Promise<any> {
   const response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers ?? {}) } });
-  const json = await response.json() as any;
+  const text = await response.text();
+  let json: any;
+  if (text.length > 0) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = undefined;
+    }
+  }
   if (!response.ok) {
-    const error = new Error(`Google API ${response.status}: ${JSON.stringify(json).slice(0, 240)}`);
+    const error = new Error(`Google API ${response.status}: ${(json ? JSON.stringify(json) : text).slice(0, 240)}`);
     (error as Error & { status?: number }).status = response.status;
     throw error;
   }
-  return json;
+  return json ?? {};
 }
 
 function providerMessageId(id: string): string {
@@ -116,13 +124,17 @@ export async function markGmailMessagesRead(
   messageIds: readonly string[],
   isRead: boolean
 ): Promise<void> {
+  const ids = [...new Set(messageIds.filter((id) => !id.includes(':optimistic:')).map(providerMessageId).filter(Boolean))];
+  if (ids.length === 0) return;
   const token = await accessToken(db, config, userId, accountId);
-  const ids = [...new Set(messageIds.map(providerMessageId))];
-  await googleJsonRequest(
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify',
-    token,
-    { method: 'POST', body: JSON.stringify({ ids, ...(isRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }) }) }
-  );
+  for (let offset = 0; offset < ids.length; offset += 1_000) {
+    const batch = ids.slice(offset, offset + 1_000);
+    await googleJsonRequest(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify',
+      token,
+      { method: 'POST', body: JSON.stringify({ ids: batch, ...(isRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }) }) }
+    );
+  }
 }
 
 export async function moveGmailThreads(
@@ -510,6 +522,89 @@ export function extractGmailBodies(payload: any): { bodyText: string; bodyHtml?:
   return bodyHtml === undefined ? { bodyText } : { bodyText, bodyHtml };
 }
 
+interface InlineImagePart {
+  mimeType: string;
+  data?: string;
+  attachmentId?: string;
+  size: number;
+}
+
+const INLINE_IMAGE_MIME = /^image\/(?:png|jpe?g|gif|webp|bmp|avif)$/i;
+const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_INLINE_IMAGES_PER_MESSAGE = 10;
+
+function collectGmailInlineParts(payload: any, parts = new Map<string, InlineImagePart>()): Map<string, InlineImagePart> {
+  if (!payload || typeof payload !== 'object') return parts;
+  const rawMime = typeof payload.mimeType === 'string' ? payload.mimeType.split(';')[0]?.trim().toLowerCase() ?? '' : '';
+  if (INLINE_IMAGE_MIME.test(rawMime)) {
+    const rawCid = header(payload.headers, 'Content-ID') || header(payload.headers, 'X-Attachment-Id');
+    const cid = rawCid.trim().replace(/^<|>$/g, '').trim();
+    const data = typeof payload.body?.data === 'string' ? payload.body.data : undefined;
+    const attachmentId = typeof payload.body?.attachmentId === 'string' ? payload.body.attachmentId : undefined;
+    const size = typeof payload.body?.size === 'number' ? payload.body.size : 0;
+    if (cid && (data || attachmentId) && !parts.has(cid)) {
+      parts.set(cid, { mimeType: rawMime, data, attachmentId, size });
+    }
+  }
+  for (const child of payload.parts ?? []) collectGmailInlineParts(child, parts);
+  return parts;
+}
+
+function toBase64DataUrl(mimeType: string, base64Url: string): string {
+  return `data:${mimeType};base64,${Buffer.from(base64Url, 'base64url').toString('base64')}`;
+}
+
+export async function resolveGmailInlineImages(
+  messageId: string,
+  token: string,
+  bodyHtml: string | undefined,
+  payload: any
+): Promise<string | undefined> {
+  if (!bodyHtml || !/cid:/i.test(bodyHtml)) return bodyHtml;
+  const inlineParts = collectGmailInlineParts(payload);
+  if (inlineParts.size === 0) return bodyHtml;
+
+  const referenced = new Set<string>();
+  for (const match of bodyHtml.matchAll(/cid:([^"'\s)>]+)/gi)) {
+    const raw = match[1]?.trim();
+    if (!raw) continue;
+    referenced.add(raw);
+    try { referenced.add(decodeURIComponent(raw)); } catch {}
+  }
+
+  const resolved = new Map<string, string>();
+  let fetchedCount = 0;
+  for (const [cid, part] of inlineParts) {
+    if (!referenced.has(cid) && !referenced.has(cid.toLowerCase())) continue;
+    if (part.size > MAX_INLINE_IMAGE_BYTES) continue;
+    if (part.data) {
+      resolved.set(cid, toBase64DataUrl(part.mimeType, part.data));
+      continue;
+    }
+    if (!part.attachmentId || fetchedCount >= MAX_INLINE_IMAGES_PER_MESSAGE) continue;
+    fetchedCount += 1;
+    try {
+      const attachment = await googleJson(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(part.attachmentId)}`,
+        token
+      );
+      if (typeof attachment?.data === 'string' && attachment.data.length > 0) {
+        resolved.set(cid, toBase64DataUrl(part.mimeType, attachment.data));
+      }
+    } catch {
+      // Falha ao baixar imagem inline não deve impedir a sincronização do e-mail.
+    }
+  }
+  if (resolved.size === 0) return bodyHtml;
+
+  return bodyHtml.replace(/cid:([^"'\s)>]+)/gi, (full, rawCid: string) => {
+    const trimmed = rawCid.trim();
+    let decoded = trimmed;
+    try { decoded = decodeURIComponent(trimmed); } catch {}
+    return resolved.get(trimmed) ?? resolved.get(decoded) ?? full;
+  });
+}
+
 function htmlToText(value: string): string {
   return value
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -682,7 +777,8 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     const labels: string[] = message.labelIds ?? [];
     const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
     const bodies = extractGmailBodies(payload);
-    return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', ...bodies, receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
+    const bodyHtml = await resolveGmailInlineImages(message.id, token, bodies.bodyHtml, payload);
+    return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', bodyText: bodies.bodyText, ...(bodyHtml !== undefined ? { bodyHtml } : {}), receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
   });
 
   return { messages, cursor: nextCursor, removedIds: [], hasMore, historyReset, ...(nextOlderCursor ? { olderCursor: nextOlderCursor } : {}) };

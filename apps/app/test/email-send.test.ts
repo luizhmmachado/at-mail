@@ -45,6 +45,9 @@ describe('imagens de e-mail no mobile', () => {
     assert.doesNotMatch(html, /<script|<base|http-equiv="refresh"|javascript:|file:\/\//i);
     const webHtml = prepareEmailHtml('<a href="https://example.com" target="_self">link</a>', true);
     assert.match(webHtml, /target="_blank"/i);
+    const cidHtml = prepareEmailHtml('<style>.x{background:url(cid:a@b)}</style><div style="background-image:url(\'cid:c@d\')"><img src="cid:b570b764d13d77086965fba8b3be5d02@utfpr.edu.br" alt="Logo"><img src="https://example.com/ok.png"></div>');
+    assert.doesNotMatch(cidHtml, /cid:/i);
+    assert.match(cidHtml, /src="https:\/\/example\.com\/ok\.png"/);
   });
 
   it('permite apenas o script conhecido no iframe web', () => {

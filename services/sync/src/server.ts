@@ -4,7 +4,7 @@ import type { SyncConfig } from './config.js';
 import { decrypt, encrypt, hashToken, matchesPkceChallenge, opaqueToken } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser, revokeToken, SyncError } from './google.js';
-import { body, cors, html, json, PayloadTooLargeError } from './http.js';
+import { body, cors, html, InvalidJsonBodyError, json, PayloadTooLargeError } from './http.js';
 import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, moveGmailThreads, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault, type VaultRecord } from './vault.js';
 import { runMobilePushPoll } from './push.js';
@@ -300,7 +300,7 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           if (!account || account.provider !== 'gmail' || account.channel !== 'email') return json(res, 404, { error: 'conta Gmail não encontrada' }, headers);
           const messageIds = Array.isArray(input.messageIds) ? input.messageIds.map(String) : [];
           if (messageIds.length === 0) return json(res, 200, { updated: 0 }, headers);
-          if (messageIds.length > 1_000 || messageIds.some((id) => !/^[\w:-]{1,256}$/.test(id))) return json(res, 400, { error: 'mensagens inválidas' }, headers);
+          if (messageIds.length > 1_000 || messageIds.some((id) => id.includes('..') || !/^[\w.:-]{1,256}$/.test(id))) return json(res, 400, { error: 'mensagens inválidas' }, headers);
           await markGmailMessagesRead(db, config, userId, accountId, messageIds, input.isRead !== false);
           return json(res, 200, { updated: messageIds.length }, headers);
         }
@@ -461,7 +461,7 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
         const detail = error instanceof Error ? error.message : 'erro interno';
         const upstreamStatus = (error as Error & { status?: number }).status;
         if (error instanceof PayloadTooLargeError) return json(res, 413, { error: 'corpo da requisição muito grande' }, headers);
-        if (error instanceof SyntaxError) return json(res, 400, { error: 'corpo JSON inválido' }, headers);
+        if (error instanceof InvalidJsonBodyError) return json(res, 400, { error: 'corpo JSON inválido' }, headers);
         if (error instanceof ConflictError) return json(res, 409, { error: error.message }, headers);
         if (upstreamStatus === 429 || (upstreamStatus === 403 && /quota|rateLimitExceeded|userRateLimitExceeded/i.test(detail))) {
           return json(res, 429, { error: 'A sincronização do Google está temporariamente limitada. Tente novamente em instantes.', errorCode: 'GOOGLE_RATE_LIMITED' }, { ...headers, 'retry-after': '30' });

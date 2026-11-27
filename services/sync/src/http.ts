@@ -10,6 +10,13 @@ export class PayloadTooLargeError extends Error {
   }
 }
 
+export class InvalidJsonBodyError extends Error {
+  constructor() {
+    super('corpo JSON inválido');
+    this.name = 'InvalidJsonBodyError';
+  }
+}
+
 export function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   res.end(JSON.stringify(body));
@@ -36,8 +43,13 @@ export async function body(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Pro
     chunks.push(buffer);
   }
   if (chunks.length === 0) return {};
-  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('JSON body inválido');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new InvalidJsonBodyError();
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new InvalidJsonBodyError();
   return parsed as Record<string, unknown>;
 }
 

@@ -400,6 +400,78 @@ describe('sincronização do Gmail', () => {
     assert.ok(paths.indexOf('/gmail/v1/users/me/profile') < paths.indexOf('/gmail/v1/users/me/messages'));
   });
 
+  it('marca e-mails como lidos mesmo quando Gmail batchModify retorna 204 sem corpo', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    const batches: unknown[] = [];
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-token' });
+      assert.equal(String(input), 'https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify');
+      batches.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    });
+    const app = await createAppServer(config, db);
+    const response = await call(app, 'POST', '/messages/read', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({
+      accountId: 'gmail-1',
+      messageIds: ['gmail:gmail-1:msg-1', 'gmail:gmail-1:msg-2'],
+      isRead: true
+    }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), { updated: 2 });
+    assert.deepEqual(batches, [{ ids: ['msg-1', 'msg-2'], removeLabelIds: ['UNREAD'] }]);
+    await app.close();
+  });
+
+  it('converte imagens inline cid do Gmail para data URLs', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    const inlinePng = Buffer.from('png-inline').toString('base64url');
+    const fetchedAttachmentPng = Buffer.from('png-anexo').toString('base64url');
+    const html = '<p><img src="cid:logo@utfpr.edu.br"><img src="cid:assinatura@utfpr.edu.br"></p>';
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname.endsWith('/profile')) return Response.json({ historyId: '100' });
+      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'msg-cid' }] });
+      if (url.pathname.endsWith('/messages/msg-cid')) {
+        return Response.json({
+          id: 'msg-cid',
+          threadId: 'thread-cid',
+          labelIds: ['INBOX'],
+          payload: {
+            mimeType: 'multipart/related',
+            headers: [],
+            parts: [
+              { mimeType: 'text/html', body: { data: Buffer.from(html).toString('base64url') } },
+              {
+                mimeType: 'image/png',
+                headers: [{ name: 'Content-ID', value: '<logo@utfpr.edu.br>' }],
+                body: { data: inlinePng, size: 10 }
+              },
+              {
+                mimeType: 'image/png',
+                headers: [{ name: 'Content-ID', value: '<assinatura@utfpr.edu.br>' }],
+                body: { attachmentId: 'att-inline-1', size: 10 }
+              }
+            ]
+          }
+        });
+      }
+      if (url.pathname.endsWith('/messages/msg-cid/attachments/att-inline-1')) {
+        return Response.json({ data: fetchedAttachmentPng, size: 10 });
+      }
+      throw new Error(`URL não esperada: ${url}`);
+    });
+    const result = await fetchGmail(db, config, 'user-1', 'gmail-1', 'work');
+    assert.equal(result.messages.length, 1);
+    const bodyHtml = result.messages[0]?.bodyHtml ?? '';
+    assert.doesNotMatch(bodyHtml, /cid:/);
+    assert.ok(bodyHtml.includes(`data:image/png;base64,${Buffer.from('png-inline').toString('base64')}`));
+    assert.ok(bodyHtml.includes(`data:image/png;base64,${Buffer.from('png-anexo').toString('base64')}`));
+  });
+
   it('altera favoritos no Gmail apenas para a conta do usuário e valida a conversa', async (t) => {
     const { db, accounts, credentials } = createFakeDb();
     accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
