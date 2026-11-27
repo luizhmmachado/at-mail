@@ -170,6 +170,20 @@ describe('threads dentro do chat', () => {
 });
 
 describe('filtros de contexto e canal', () => {
+  it('mantém resultados arquivados visíveis durante uma busca', () => {
+    const archived = fixture().map((message) =>
+      message.channel === 'email' ? { ...message, folder: 'archived' as const } : message
+    );
+    const result = selectFeed(archived, {
+      contextId: 'all',
+      channel: 'email',
+      query: 'RFC',
+      folder: 'inbox'
+    });
+
+    assert.ok(result.threads.some((thread) => thread.emailFolder === 'archived'));
+  });
+
   it('separa contexto de trabalho de estudos', () => {
     const work = selectFeed(fixture(), { contextId: brand.context('work'), channel: 'all', query: '' });
     const studies = selectFeed(fixture(), { contextId: brand.context('studies'), channel: 'all', query: '' });

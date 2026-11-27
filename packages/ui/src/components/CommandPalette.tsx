@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { formatThreadTime, threadParticipantsLabel } from '@mail/core';
+import { formatThreadTime, threadParticipantsLabel, type ThreadId } from '@mail/core';
 import { useTheme } from '../theme/MailThemeProvider';
 import { useAppStore, useMailActions, useMailSnapshot } from '../store/MailStoreProvider';
 import { typeStyle } from '../theme/typography';
@@ -12,7 +12,7 @@ import { Glyph } from './LucideGlyph';
  * Reaproveita o token de scrim e a mesma escala tipográfica da caixa unificada:
  * o modal não introduz uma segunda linguagem visual.
  */
-export function CommandPalette({ mobile = false }: { mobile?: boolean }): ReactElement | null {
+export function CommandPalette({ mobile = false, searching = false, error, onSelectThread }: { mobile?: boolean; searching?: boolean; error?: string; onSelectThread?: (threadId: ThreadId) => void }): ReactElement | null {
   const theme = useTheme();
   const store = useAppStore();
   const snapshot = useMailSnapshot();
@@ -81,7 +81,15 @@ export function CommandPalette({ mobile = false }: { mobile?: boolean }): ReactE
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
-            {results.length === 0 ? (
+            {error !== undefined ? (
+              <Text accessibilityRole="alert" style={{ ...typeStyle(theme, 'body'), padding: theme.space[4], color: theme.colors.danger }}>
+                {error}
+              </Text>
+            ) : searching ? (
+              <Text style={{ ...typeStyle(theme, 'body'), padding: theme.space[4], color: theme.colors.textSecondary }}>
+                Buscando em todos os e-mails da conta…
+              </Text>
+            ) : results.length === 0 ? (
               <Text
                 style={{
                   ...typeStyle(theme, 'body'),
@@ -97,7 +105,8 @@ export function CommandPalette({ mobile = false }: { mobile?: boolean }): ReactE
                   key={thread.id}
                   accessibilityRole="button"
                   onPress={() => {
-                    actions.selectThread(thread.id);
+                    if (onSelectThread) onSelectThread(thread.id);
+                    else actions.selectThread(thread.id);
                     actions.toggleCommandPalette(false);
                   }}
                   style={{

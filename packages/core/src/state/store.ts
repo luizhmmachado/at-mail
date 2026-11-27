@@ -41,6 +41,7 @@ export interface SyncState {
 export interface UiState {
   themeMode: ThemeMode;
   themePreference: ThemePreference;
+  chatEnabled: boolean;
   commandPaletteOpen: boolean;
   composeOpen: boolean;
   sidebarCollapsed: boolean;
@@ -66,6 +67,7 @@ export interface AppStoreOptions {
   messages?: MailMessage[];
   themeMode?: ThemeMode;
   themePreference?: ThemePreference;
+  chatEnabled?: boolean;
   onMarkMessagesRead?: (messages: readonly MailMessage[], isRead: boolean) => void | Promise<void>;
   onSetThreadStarred?: (message: Extract<MailMessage, { channel: 'email' }>, isStarred: boolean) => Promise<void>;
   onMoveThreads?: (
@@ -77,6 +79,7 @@ export interface AppStoreOptions {
 const DEFAULT_UI: UiState = {
   themeMode: 'light',
   themePreference: 'system',
+  chatEnabled: true,
   commandPaletteOpen: false,
   composeOpen: false,
   sidebarCollapsed: false,
@@ -108,7 +111,8 @@ export function createAppStore(options: AppStoreOptions = {}) {
       ...DEFAULT_UI,
       themeMode: options.themePreference === 'light' || options.themePreference === 'dark'
         ? options.themePreference : options.themeMode ?? DEFAULT_UI.themeMode,
-      themePreference: options.themePreference ?? options.themeMode ?? DEFAULT_UI.themePreference
+      themePreference: options.themePreference ?? options.themeMode ?? DEFAULT_UI.themePreference,
+      chatEnabled: options.chatEnabled ?? DEFAULT_UI.chatEnabled
     }
   };
 
@@ -263,6 +267,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
     },
 
     setChannel(channel: ChannelFilter): void {
+      if (channel === 'chat' && !snapshot.ui.chatEnabled) return;
       setView({
         channel,
         sentOnly: false,
@@ -363,6 +368,11 @@ export function createAppStore(options: AppStoreOptions = {}) {
         themePreference,
         themeMode: themePreference === 'system' ? snapshot.ui.themeMode : themePreference
       } });
+    },
+
+    setChatEnabled(chatEnabled: boolean): void {
+      patch({ ui: { ...snapshot.ui, chatEnabled } });
+      if (!chatEnabled && snapshot.view.channel === 'chat') setView({ channel: 'email' });
     },
 
     applySystemTheme(themeMode: ThemeMode): void {

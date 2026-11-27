@@ -14,9 +14,9 @@ import { store, syncEngine } from './src/store';
 import { DEMO_MODE, GOOGLE_CLIENT_ID, GOOGLE_SCOPES } from './src/config';
 import { ensureNotificationPermission, registerPushNotifications } from './src/notifications';
 import { awaitGoogleLogin, beginGoogleLogin, fetchAccounts, isTauriRuntime, pendingLoginState, sessionToken, setGoogleAuthRevokedHandler } from './src/auth';
-import { restoreThemePreference } from './src/theme-preference';
+import { restoreChatEnabled, restoreThemePreference } from './src/theme-preference';
 import { SignInScreen } from './src/SignInScreen';
-import { addChatReaction, loadChatImage, removeAccount, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
+import { addChatReaction, loadChatImage, removeAccount, searchEmails, sendChatMessage, sendChatReply, sendEmail, setAccountNotifications, updateAccountContexts } from './src/adapters/sync-client';
 import { LandingScreen } from './src/LandingScreen';
 import { brand, isChatMessage } from '@mail/core';
 import type { Account, AccountId, ChatMessage, ContextId, MessageId, UnifiedThread } from '@mail/core';
@@ -29,6 +29,11 @@ const OPEN_CHAT_SYNC_INTERVAL_MS = 10 * 1000;
 
 let optimisticMessageSequence = 0;
 const legacySends = new Map<MessageId, { accountId: AccountId; confirmedAt: number }>();
+
+function syncEnabledChannels(): void {
+  void syncEngine.syncChannel('email');
+  if (store.getSnapshot().ui.chatEnabled) void syncEngine.syncChannel('chat');
+}
 
 function nextOptimisticMessageName(): string {
   optimisticMessageSequence += 1;
@@ -86,13 +91,15 @@ export default function App() {
   const [authError, setAuthError] = useState<string>();
 
   const activateSession = useCallback(async (): Promise<void> => {
+    const chatEnabled = await restoreChatEnabled();
+    if (chatEnabled !== undefined) store.actions.setChatEnabled(chatEnabled);
     const accounts = await fetchAccounts();
     store.actions.replaceAccounts(accounts);
     setAuthenticated(accounts.length > 0);
     setShowWebApp(!isPublicWeb || accounts.length > 0);
     if (accounts.length === 0) return;
     void registerPushNotifications().catch((error) => console.error('Falha ao registrar notificações push.', error));
-    void syncEngine.syncAll();
+    syncEnabledChannels();
   }, [isPublicWeb]);
 
   function reconcileLegacySend(accountId: AccountId, optimisticId: MessageId): void {
@@ -236,6 +243,23 @@ export default function App() {
     void syncEngine.syncChannel(message.channel);
   }
 
+  const searchAllEmails = useCallback(async (query: string): Promise<void> => {
+    const snapshot = store.getSnapshot();
+    if (snapshot.view.channel === 'chat' || /\bin:chat\b/i.test(query)) return;
+    const accountIds = snapshot.accounts
+      .filter((account) =>
+        account.channel === 'email' &&
+        account.provider === 'gmail' &&
+        account.status !== 'reauth-required' &&
+        account.status !== 'paused' &&
+        (snapshot.view.contextId === 'all' || account.contextId === snapshot.view.contextId)
+      )
+      .slice(0, 3)
+      .map((account) => account.id);
+    if (accountIds.length === 0) return;
+    store.actions.upsertMessages(await searchEmails(accountIds, query));
+  }, []);
+
   async function beginAddAccount(): Promise<void> {
     try {
       const state = await beginGoogleLogin(GOOGLE_CLIENT_ID, GOOGLE_SCOPES, 'add');
@@ -244,7 +268,7 @@ export default function App() {
       store.actions.replaceAccounts(accounts);
       setAuthenticated(accounts.length > 0);
       setShowWebApp(!isPublicWeb || accounts.length > 0);
-      void syncEngine.syncAll();
+      syncEnabledChannels();
     } catch (error) {
       setAuthError(messageOf(error, 'Falha ao adicionar a conta'));
     }
@@ -289,6 +313,11 @@ export default function App() {
         if (mode !== undefined) store.actions.setThemePreference(mode);
       })
       .catch((error) => console.error('Falha ao restaurar a preferência de tema.', error));
+    void restoreChatEnabled()
+      .then((enabled) => {
+        if (enabled !== undefined) store.actions.setChatEnabled(enabled);
+      })
+      .catch((error) => console.error('Falha ao restaurar a configuração do Chat.', error));
     return () => {
       unsubscribe();
       subscription.remove();
@@ -325,16 +354,19 @@ export default function App() {
   useEffect(() => {
     if (DEMO_MODE || !authenticated) return;
     const syncIfActive = (): void => {
-      if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncAll();
+      if (isTauriRuntime() || AppState.currentState === 'active') syncEnabledChannels();
     };
     const syncEmailIfActive = (): void => {
       if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncChannel('email');
     };
     const syncChatIfActive = (): void => {
-      if (isTauriRuntime() || AppState.currentState === 'active') void syncEngine.syncChannel('chat');
+      if ((isTauriRuntime() || AppState.currentState === 'active') && store.getSnapshot().ui.chatEnabled) {
+        void syncEngine.syncChannel('chat');
+      }
     };
     const syncOpenChatIfActive = (): void => {
       if (!isTauriRuntime() && AppState.currentState !== 'active') return;
+      if (!store.getSnapshot().ui.chatEnabled) return;
       const threadId = store.getSnapshot().view.selectedThreadId;
       if (threadId === undefined) return;
       const message = store.getThreadMessages(threadId).find((item) => isChatMessage(item) && !item.id.includes(':optimistic:'));
@@ -408,6 +440,10 @@ export default function App() {
                   const emailAccounts = store.getSnapshot().accounts.filter((account) => account.channel === 'email' && account.status !== 'reauth-required');
                   await Promise.all(emailAccounts.map((account) => syncEngine.syncOlder(account.id)));
                 }}
+                onRefreshEmails={async () => {
+                  await syncEngine.syncChannel('email');
+                }}
+                onSearchEmails={searchAllEmails}
               />
             </MailStoreProvider>
           );

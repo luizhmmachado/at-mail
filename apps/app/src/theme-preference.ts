@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { ThemePreference } from '@mail/core';
 
 const THEME_KEY = 'atmail.ui.theme';
+const CHAT_KEY = 'atmail.ui.chat-enabled';
 
 function normalize(value: string | null | undefined): ThemePreference | undefined {
   return value === 'light' || value === 'dark' || value === 'system' ? value : undefined;
@@ -39,5 +40,39 @@ export function writeThemePreference(mode: ThemePreference): void {
     void SecureStore.setItemAsync(THEME_KEY, mode).catch(() => undefined);
   } catch {
     // Armazenamento indisponível: o tema vale só para esta sessão.
+  }
+}
+
+export function readChatEnabledSync(): boolean | undefined {
+  if (Platform.OS !== 'web') return undefined;
+  try {
+    const value = globalThis.localStorage?.getItem(CHAT_KEY);
+    return value === 'true' ? true : value === 'false' ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function restoreChatEnabled(): Promise<boolean | undefined> {
+  const sync = readChatEnabledSync();
+  if (sync !== undefined) return sync;
+  if (Platform.OS === 'web') return undefined;
+  try {
+    const value = await SecureStore.getItemAsync(CHAT_KEY);
+    return value === 'true' ? true : value === 'false' ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeChatEnabled(enabled: boolean): void {
+  try {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.setItem(CHAT_KEY, String(enabled));
+      return;
+    }
+    void SecureStore.setItemAsync(CHAT_KEY, String(enabled)).catch(() => undefined);
+  } catch {
+    // Armazenamento indisponível: a configuração vale só para esta sessão.
   }
 }

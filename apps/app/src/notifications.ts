@@ -36,6 +36,13 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   }
 
   if (granted) {
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('atmail-messages', {
+        name: 'Mensagens',
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: 'default'
+      });
+    }
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
         shouldShowBanner: true,

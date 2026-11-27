@@ -219,6 +219,18 @@ export function SettingsModal({ visible, onClose, onAddAccount, onMoveAccounts, 
               <ThemeOption label="Escuro" selected={snapshot.ui.themePreference === 'dark'} onPress={() => actions.setThemeMode('dark')} />
             </View>
 
+            <View style={{ minHeight: 62, flexDirection: 'row', alignItems: 'center', marginTop: theme.space[4], borderBottomWidth: theme.border.hairline, borderBottomColor: theme.colors.borderSubtle }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ ...typeStyle(theme, 'rowName'), color: theme.colors.textPrimary }}>Aba de Chat</Text>
+                <Text style={{ ...typeStyle(theme, 'rowMeta'), color: theme.colors.textSecondary }}>Exibir conversas do Google Chat</Text>
+              </View>
+              <Switch
+                accessibilityLabel="Exibir aba de Chat"
+                value={snapshot.ui.chatEnabled}
+                onValueChange={actions.setChatEnabled}
+              />
+            </View>
+
             <View style={{ marginTop: theme.space[6], marginBottom: theme.space[2] }}>
               <Text style={{ ...typeStyle(theme, 'sectionLabel', 'medium'), color: theme.colors.textSecondary }}>CONTAS CONECTADAS</Text>
             </View>

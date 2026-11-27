@@ -2,18 +2,20 @@ import { createAppStore, createPresetContexts, createSeedData, SyncEngine } from
 import type { MailboxAdapter, SyncPage } from '@mail/core';
 import { DEMO_MODE } from './config';
 import { createHttpAdapter, markMessagesRead, moveEmailThreads, setThreadStarred } from './adapters/sync-client';
-import { readThemePreferenceSync, writeThemePreference } from './theme-preference';
+import { readChatEnabledSync, readThemePreferenceSync, writeChatEnabled, writeThemePreference } from './theme-preference';
 import { presentMessageNotification } from './notifications';
 import { Appearance } from 'react-native';
 
 const seed = createSeedData();
 const themePreference = readThemePreferenceSync() ?? 'system';
+const chatEnabled = readChatEnabledSync() ?? true;
 
 export const store = createAppStore({
   contexts: DEMO_MODE ? seed.contexts : createPresetContexts(),
   accounts: DEMO_MODE ? seed.accounts : [],
   messages: DEMO_MODE ? seed.messages : [],
   themePreference,
+  chatEnabled,
   themeMode: themePreference === 'system' ? Appearance.getColorScheme() ?? 'light' : themePreference,
   onMarkMessagesRead: DEMO_MODE ? undefined : markMessagesRead,
   onSetThreadStarred: DEMO_MODE ? undefined : setThreadStarred,
@@ -22,11 +24,18 @@ export const store = createAppStore({
 
 /** O tema escolhido sobrevive a reinícios do site/app. */
 let persistedTheme = store.getSnapshot().ui.themePreference;
+let persistedChatEnabled = store.getSnapshot().ui.chatEnabled;
 store.subscribe(() => {
   const mode = store.getSnapshot().ui.themePreference;
-  if (mode === persistedTheme) return;
-  persistedTheme = mode;
-  writeThemePreference(mode);
+  if (mode !== persistedTheme) {
+    persistedTheme = mode;
+    writeThemePreference(mode);
+  }
+  const enabled = store.getSnapshot().ui.chatEnabled;
+  if (enabled !== persistedChatEnabled) {
+    persistedChatEnabled = enabled;
+    writeChatEnabled(enabled);
+  }
 });
 
 /** Em modo demo nada sai para a rede: a UI é explorada com dados locais. */

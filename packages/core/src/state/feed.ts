@@ -282,6 +282,7 @@ function isVisible(thread: UnifiedThread, query: FeedQuery): boolean {
   if (query.unreadOnly === true && thread.unreadCount === 0) return false;
   if (query.starredOnly === true && (thread.channel !== 'email' || !thread.flags.isStarred)) return false;
   if (query.query.trim().length > 0 && !matchesQuery(thread, query.query)) return false;
+  if (query.query.trim().length > 0) return true;
 
   if (query.folder === 'archived') {
     if (thread.channel !== 'email' || thread.emailFolder !== 'archived') return false;

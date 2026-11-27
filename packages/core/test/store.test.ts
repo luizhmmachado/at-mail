@@ -51,6 +51,27 @@ describe('tema do sistema', () => {
   });
 });
 
+describe('aba de chat', () => {
+  it('volta para e-mail ao desativar o chat', () => {
+    const store = createAppStore({ chatEnabled: true });
+    store.actions.setChannel('chat');
+    store.actions.setChatEnabled(false);
+
+    assert.equal(store.getSnapshot().ui.chatEnabled, false);
+    assert.equal(store.getSnapshot().view.channel, 'email');
+  });
+
+  it('não permite abrir o chat enquanto a aba está desativada', () => {
+    const store = createAppStore({ chatEnabled: false });
+    store.actions.setChannel('chat');
+
+    assert.equal(store.getSnapshot().view.channel, 'email');
+    store.actions.setChatEnabled(true);
+    store.actions.setChannel('chat');
+    assert.equal(store.getSnapshot().view.channel, 'chat');
+  });
+});
+
 function storeWithSeed() {
   const seed = createSeedData(NOW);
   return createAppStore({ contexts: seed.contexts, accounts: seed.accounts, messages: seed.messages });

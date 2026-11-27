@@ -116,6 +116,7 @@ async function sendNewMessages(db: Db, account: PushAccount, messages: readonly 
     title: message.channel === 'email' ? message.subject : message.spaceName,
     body: message.snippet,
     sound: 'default',
+    channelId: 'atmail-messages',
     data: { messageId: message.id, accountId: message.accountId, channel: message.channel }
   }));
   await sendExpoPush(payloads);

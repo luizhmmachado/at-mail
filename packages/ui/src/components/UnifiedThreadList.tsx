@@ -26,6 +26,9 @@ export interface UnifiedThreadListProps {
   /** Em telas pequenas a lista ocupa a tela inteira. */
   fullScreen?: boolean;
   onLoadOlder?: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
+  searchingEmails?: boolean;
+  searchError?: string;
 }
 
 /**
@@ -34,13 +37,14 @@ export interface UnifiedThreadListProps {
  * A ordem vertical é fixa: título (20/24) + chevron + escrever, busca de 34 px,
  * segmentado de 32 px e, dentro da lista, cabeçalhos de data com contagem.
  */
-export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false, onLoadOlder }: UnifiedThreadListProps): ReactElement {
+export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, onOpenSettings, fullScreen = false, onLoadOlder, onRefresh, searchingEmails = false, searchError }: UnifiedThreadListProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const actions = useMailActions();
   const [menuOpen, setMenuOpen] = useState(false);
   const [actionThread, setActionThread] = useState<UnifiedThread>();
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [hasScrolled, setHasScrolled] = useState(false);
 
   const sections = useMemo(
@@ -62,6 +66,12 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
   const selectionMode = snapshot.ui.selectingThreads;
   const selectedCount = snapshot.ui.selectedThreadIds.length;
   const syncingMore = hasVisibleSyncActivity(snapshot, feed.threads.length);
+  const refreshAvailable = mobile && snapshot.view.channel === 'email' && onRefresh !== undefined;
+  const refresh = (): void => {
+    if (refreshing || onRefresh === undefined) return;
+    setRefreshing(true);
+    void onRefresh().finally(() => setRefreshing(false));
+  };
 
   const platform = currentPlatform();
 
@@ -122,6 +132,14 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
               >
                 <Glyph name="search" size={22} color={theme.colors.textPrimary} />
               </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Abrir configurações"
+                onPress={onOpenSettings}
+                style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Glyph name="settings" size={22} color={theme.colors.textPrimary} />
+              </Pressable>
             </View>
           ) : (
             <Pressable
@@ -175,9 +193,11 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
           </View>
         )}
 
-        <View style={{ marginTop: mobile ? 21 : 14 }}>
-          <ChannelTabs feed={feed} variant={mobile ? 'mobile' : 'desktop'} />
-        </View>
+        {snapshot.ui.chatEnabled && (
+          <View style={{ marginTop: mobile ? 21 : 14 }}>
+            <ChannelTabs feed={feed} variant={mobile ? 'mobile' : 'desktop'} />
+          </View>
+        )}
         <FolderTabs />
       </View>
 
@@ -265,7 +285,7 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
             onPress={() => onSelectThread(item.id)}
           />
         )}
-        ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={snapshot.sync.status === 'syncing' && snapshot.sync.lastSyncedAt === undefined} />}
+        ListEmptyComponent={<EmptyState query={snapshot.view.query} loading={(snapshot.sync.status === 'syncing' && snapshot.sync.lastSyncedAt === undefined) || searchingEmails} error={searchError} />}
         contentContainerStyle={{ paddingBottom: fullScreen ? theme.space[10] : theme.space[6] }}
         onEndReached={onLoadOlder && !loadingOlder ? () => {
           if (!hasScrolled) return;
@@ -273,6 +293,8 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
           void onLoadOlder().finally(() => setLoadingOlder(false));
         } : undefined}
         onEndReachedThreshold={0.4}
+        refreshing={refreshAvailable ? refreshing : false}
+        onRefresh={refreshAvailable ? refresh : undefined}
         onScroll={(event) => {
           if (event.nativeEvent.contentOffset.y > 8) setHasScrolled(true);
         }}
@@ -538,20 +560,22 @@ function ContextOption({
   );
 }
 
-function EmptyState({ query, loading }: { query: string; loading: boolean }): ReactElement {
+function EmptyState({ query, loading, error }: { query: string; loading: boolean; error?: string }): ReactElement {
   const theme = useTheme();
   return (
     <View style={{ padding: theme.space[6], gap: theme.space[2] }}>
       {loading && <ActivityIndicator accessibilityLabel="Carregando mensagens" color={theme.colors.accent} />}
       <Text style={{ ...typeStyle(theme, 'readerName'), color: theme.colors.textPrimary }}>
-        {loading ? 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado' : 'Caixa de entrada livre'}
+        {loading ? query.length > 0 ? 'Buscando e-mails…' : 'Carregando mensagens…' : query.length > 0 ? 'Nada encontrado' : 'Caixa de entrada livre'}
       </Text>
       <Text style={{ ...typeStyle(theme, 'body'), color: theme.colors.textSecondary }}>
-        {loading
+        {error !== undefined
+          ? error
+          : loading
           ? 'Buscando suas mensagens e conversas.'
           : query.length > 0
           ? `Nenhuma conversa corresponde a “${query}”. Tente from:, context: ou in:chat.`
-          : 'No conversations in this context or folder.'}
+          : 'Nenhuma conversa neste contexto ou pasta.'}
       </Text>
     </View>
   );

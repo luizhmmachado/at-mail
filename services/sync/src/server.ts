@@ -5,7 +5,7 @@ import { decrypt, encrypt, hashToken, matchesPkceChallenge, opaqueToken } from '
 import { openDb, type Db } from './db.js';
 import { exchangeCode, getUser, revokeToken, SyncError } from './google.js';
 import { body, cors, html, InvalidJsonBodyError, json, PayloadTooLargeError } from './http.js';
-import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, moveGmailThreads, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
+import { createChatReaction, fetchChat, fetchChatImage, fetchGmail, isValidEmailAddress, markChatSpaceRead, markChatThreadRead, markGmailMessagesRead, moveGmailThreads, searchGmail, sendChat, sendChatToSpace, sendGmail, setGmailThreadStarred, type GmailAttachmentPayload } from './providers.js';
 import { readVault, writeVault, type VaultRecord } from './vault.js';
 import { runMobilePushPoll } from './push.js';
 
@@ -438,6 +438,25 @@ export async function createAppServer(config: SyncConfig, database?: Db): Promis
           const downloadUrl = typeof input.downloadUrl === 'string' ? input.downloadUrl : undefined;
           const image = await fetchChatImage(db, config, userId, accountId, attachmentName, downloadUrl);
           return json(res, 200, image, headers);
+        }
+        if (req.method === 'POST' && (url.pathname === '/search/emails' || url.pathname === '/api/search/emails')) {
+          const input = await body(req);
+          const query = typeof input.query === 'string' ? input.query.trim() : '';
+          const accountIds = Array.isArray(input.accountIds)
+            ? input.accountIds.filter((id): id is string => typeof id === 'string').slice(0, 3)
+            : [];
+          if (query.length < 3 || query.length > 300 || accountIds.length === 0) {
+            return json(res, 400, { error: 'informe uma busca com 3 a 300 caracteres e ao menos uma conta' }, headers);
+          }
+          const accounts = (await db.query<{ id: string; context_id: string }>(
+            "SELECT id, context_id FROM atmail_accounts WHERE user_id = $1 AND id = ANY($2::text[]) AND provider = 'gmail' AND channel = 'email' ORDER BY id",
+            [userId, [...new Set(accountIds)]]
+          )).rows;
+          const messages = [];
+          for (const account of accounts) {
+            messages.push(...await searchGmail(db, config, userId, account.id, account.context_id, query));
+          }
+          return json(res, 200, { messages }, headers);
         }
         const syncMatch = url.pathname.match(/^(?:\/api)?\/sync\/(gmail|google-chat)$/);
         if (req.method === 'POST' && syncMatch) {

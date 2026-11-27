@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/push/cron",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "builds": [
     {
       "src": "api/index.ts",
@@ -15,7 +21,7 @@
   ],
   "routes": [
     {
-      "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "src": "^/api/(auth|accounts|vault|sync|messages|search|push)(/.*)?$",
       "has": [
         {
           "type": "host",
@@ -25,7 +31,7 @@
       "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2"
     },
     {
-      "src": "^/api/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "src": "^/api/(auth|accounts|vault|sync|messages|search|push)(/.*)?$",
       "has": [
         {
           "type": "host",
@@ -35,7 +41,7 @@
       "dest": "https://at-mail-sync-legacy.vercel.app/api/$1$2"
     },
     {
-      "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "src": "^/(auth|accounts|vault|sync|messages|search|push)(/.*)?$",
       "has": [
         {
           "type": "host",
@@ -45,7 +51,7 @@
       "dest": "https://at-mail-sync-legacy.vercel.app/$1$2"
     },
     {
-      "src": "^/(auth|accounts|vault|sync|messages)(/.*)?$",
+      "src": "^/(auth|accounts|vault|sync|messages|search|push)(/.*)?$",
       "has": [
         {
           "type": "host",

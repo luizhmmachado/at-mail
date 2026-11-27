@@ -627,6 +627,7 @@ function decodeCodePoint(value: number): string {
 
 const GMAIL_PAGE_CURSOR_PREFIX = 'gmail-period:';
 const GMAIL_PERIOD_DAYS = 7;
+const GMAIL_SEARCH_LIMIT = 8;
 
 export function gmailMessagesUrl(pageToken?: string): string {
   const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
@@ -641,6 +642,13 @@ export function gmailHistoryUrl(startHistoryId: string, pageToken?: string): str
   url.searchParams.set('startHistoryId', startHistoryId);
   for (const type of ['messageAdded', 'labelAdded', 'labelRemoved']) url.searchParams.append('historyTypes', type);
   if (pageToken) url.searchParams.set('pageToken', pageToken);
+  return url.toString();
+}
+
+export function gmailSearchUrl(query: string, limit = GMAIL_SEARCH_LIMIT): string {
+  const url = new URL(gmailMessagesUrl());
+  url.searchParams.set('q', query);
+  url.searchParams.set('maxResults', String(Math.min(limit, GMAIL_SEARCH_LIMIT)));
   return url.toString();
 }
 
@@ -684,6 +692,32 @@ async function mapWithConcurrency<T, R>(values: readonly T[], concurrency: numbe
   return results;
 }
 
+export async function searchGmail(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  contextId: string,
+  query: string,
+  limit = GMAIL_SEARCH_LIMIT
+): Promise<MailMessage[]> {
+  const normalized = query.trim();
+  if (normalized.length < 3 || normalized.length > 300) throw new Error('busca do Gmail deve ter entre 3 e 300 caracteres');
+  const token = await accessToken(db, config, userId, accountId);
+  const result = await googleJson(gmailSearchUrl(normalized, limit), token);
+  const ids = (result.messages ?? []).flatMap((message: unknown) => {
+    if (typeof message !== 'object' || message === null || !('id' in message) || typeof message.id !== 'string') return [];
+    return [message.id];
+  });
+  return mapWithConcurrency(ids, 3, async (id: string) => mapGmailMessage(
+    await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token),
+    token,
+    accountId,
+    contextId,
+    false
+  ));
+}
+
 function parseGmailPageCursor(cursor: string): { historyId: string; pageToken: string } | undefined {
   if (!cursor.startsWith(GMAIL_PAGE_CURSOR_PREFIX)) return undefined;
   try {
@@ -697,6 +731,42 @@ function parseGmailPageCursor(cursor: string): { historyId: string; pageToken: s
 
 function gmailDate(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10).replaceAll('-', '/');
+}
+
+async function mapGmailMessage(message: any, token: string, accountId: string, contextId: string, resolveInlineImages = true): Promise<MailMessage> {
+  const payload = message.payload ?? {};
+  const headers = payload.headers ?? [];
+  const from = header(headers, 'From') || 'Google Gmail';
+  const to = header(headers, 'To');
+  const subject = header(headers, 'Subject') || '(sem assunto)';
+  const date = Date.parse(header(headers, 'Date')) || Date.now();
+  const labels: string[] = message.labelIds ?? [];
+  const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
+  const bodies = extractGmailBodies(payload);
+  const bodyHtml = resolveInlineImages
+    ? await resolveGmailInlineImages(message.id, token, bodies.bodyHtml, payload)
+    : bodies.bodyHtml;
+  return {
+    id: brand.message(`gmail:${accountId}:${message.id}`),
+    accountId: brand.account(accountId),
+    contextId: brand.context(contextId),
+    channel: 'email',
+    participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []),
+    snippet: message.snippet ?? '',
+    bodyText: bodies.bodyText,
+    ...(bodyHtml !== undefined ? { bodyHtml } : {}),
+    receivedAt: date,
+    isRead: !labels.includes('UNREAD'),
+    isStarred: labels.includes('STARRED'),
+    isMentioned: false,
+    labels,
+    subject,
+    providerThreadId: message.threadId ?? message.id,
+    rfcMessageId: header(headers, 'Message-ID'),
+    references: [],
+    folder,
+    attachments: []
+  };
 }
 
 function gmailOlderCursor(historyId: string, before: number): string {
@@ -766,20 +836,16 @@ export async function fetchGmail(db: Db, config: SyncConfig, userId: string, acc
     messageIds = [...ids];
   }
 
-  const messages = await mapWithConcurrency(messageIds ?? [], 3, async (id) => {
-    const message = await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token);
-    const payload = message.payload ?? {};
-    const headers = payload.headers ?? [];
-    const from = header(headers, 'From') || 'Google Gmail';
-    const to = header(headers, 'To');
-    const subject = header(headers, 'Subject') || '(sem assunto)';
-    const date = Date.parse(header(headers, 'Date')) || Date.now();
-    const labels: string[] = message.labelIds ?? [];
-    const folder = labels.includes('TRASH') ? 'trash' : labels.includes('SPAM') ? 'spam' : labels.includes('SENT') ? 'sent' : labels.includes('INBOX') ? 'inbox' : 'archived';
-    const bodies = extractGmailBodies(payload);
-    const bodyHtml = await resolveGmailInlineImages(message.id, token, bodies.bodyHtml, payload);
-    return { id: brand.message(`gmail:${accountId}:${message.id}`), accountId: brand.account(accountId), contextId: brand.context(contextId), channel: 'email' as const, participants: [{ name: from, email: from.match(/<([^>]+)>/)?.[1] ?? from }].concat(to ? [{ name: to, email: to }] : []), snippet: message.snippet ?? '', bodyText: bodies.bodyText, ...(bodyHtml !== undefined ? { bodyHtml } : {}), receivedAt: date, isRead: !labels.includes('UNREAD'), isStarred: labels.includes('STARRED'), isMentioned: false, labels, subject, providerThreadId: message.threadId ?? message.id, rfcMessageId: header(headers, 'Message-ID'), references: [], folder, attachments: [] };
-  });
+  const messages = await mapWithConcurrency(
+    messageIds ?? [],
+    3,
+    async (id) => mapGmailMessage(
+      await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token),
+      token,
+      accountId,
+      contextId
+    )
+  );
 
   return { messages, cursor: nextCursor, removedIds: [], hasMore, historyReset, ...(nextOlderCursor ? { olderCursor: nextOlderCursor } : {}) };
 }

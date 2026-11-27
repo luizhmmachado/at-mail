@@ -9,7 +9,7 @@ import { encrypt, hashToken, pkceChallenge } from '../src/crypto';
 import { databasePoolConfig, serverlessDatabaseUrl } from '../src/db';
 import { SUPABASE_CA } from '../src/supabase-ca';
 import type { Db } from '../src/db';
-import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, fetchGmail, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
+import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, fetchGmail, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, gmailSearchUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -367,6 +367,41 @@ describe('conexão PostgreSQL serverless', () => {
 });
 
 describe('sincronização do Gmail', () => {
+  it('limita a busca remota ao Gmail e aos oito resultados mais relevantes', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    let listQuery = '';
+    let listLimit = '';
+    let detailRequests = 0;
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname.endsWith('/messages')) {
+        listQuery = url.searchParams.get('q') ?? '';
+        listLimit = url.searchParams.get('maxResults') ?? '';
+        return Response.json({ messages: [{ id: 'antigo-1' }, { id: 'antigo-2' }] });
+      }
+      detailRequests += 1;
+      const id = url.pathname.split('/').pop();
+      return Response.json({ id, threadId: `thread-${id}`, labelIds: ['INBOX'], payload: { headers: [{ name: 'Subject', value: `Resultado ${id}` }] } });
+    });
+    const app = await createAppServer(config, db);
+
+    const response = await call(app, 'POST', '/search/emails', '127.0.0.1', undefined, 'Bearer test-session', JSON.stringify({
+      accountIds: ['gmail-1', 'outro-usuario'],
+      query: 'relatorio'
+    }));
+
+    assert.equal(response.status, 200);
+    assert.equal(listQuery, 'relatorio');
+    assert.equal(listLimit, '8');
+    assert.equal(detailRequests, 2);
+    assert.equal(JSON.parse(response.body).messages.length, 2);
+    assert.equal(gmailSearchUrl('relatorio', 99), 'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=8&includeSpamTrash=true&q=relatorio');
+    await app.close();
+  });
+
   it('carrega os últimos sete dias e depois o período anterior', async (t) => {
     const { db, accounts, credentials } = createFakeDb();
     accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
@@ -693,6 +728,17 @@ function createFakeDb(): {
         const [accountIds, userId] = values as [string[], string];
         const owned = accountIds.filter((accountId) => accounts.get(accountId)?.userId === userId);
         return { rows: owned.map((id) => ({ id } as unknown as T)) };
+      }
+      if (text.startsWith('SELECT id, context_id FROM atmail_accounts WHERE user_id = $1 AND id = ANY')) {
+        const [userId, accountIds] = values as [string, string[]];
+        return {
+          rows: accountIds.flatMap((id) => {
+            const account = accounts.get(id);
+            return account?.userId === userId && (account.provider ?? 'gmail') === 'gmail' && (account.channel ?? 'email') === 'email'
+              ? [{ id, context_id: account.contextId } as unknown as T]
+              : [];
+          })
+        };
       }
       if (text.startsWith('UPDATE atmail_accounts SET context_id')) {
         const [contextId, _updatedAt, accountIds, userId] = values as [string, number, string[], string];

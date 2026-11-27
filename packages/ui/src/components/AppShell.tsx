@@ -27,18 +27,20 @@ export interface AppShellProps {
   onSetAccountNotifications?: (accountId: AccountId, enabled: boolean) => Promise<void>;
   onSendNewMessage?: (message: NewMessageSubmission) => Promise<void>;
   onLoadOlderEmails?: () => Promise<void>;
+  onRefreshEmails?: () => Promise<void>;
+  onSearchEmails?: (query: string) => Promise<void>;
 }
 
-export function AppShell({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails }: AppShellProps = {}): ReactElement {
+export function AppShell({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails, onRefreshEmails, onSearchEmails }: AppShellProps = {}): ReactElement {
   const snapshot = useMailSnapshot();
   return (
     <MailThemeProvider mode={snapshot.ui.themeMode}>
-      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} onLoadOlderEmails={onLoadOlderEmails} />
+      <ShellBody appIcon={appIcon} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} onAddAccount={onAddAccount} onMoveAccounts={onMoveAccounts} onRemoveAccount={onRemoveAccount} onSetAccountNotifications={onSetAccountNotifications} onSendNewMessage={onSendNewMessage} onLoadOlderEmails={onLoadOlderEmails} onRefreshEmails={onRefreshEmails} onSearchEmails={onSearchEmails} />
     </MailThemeProvider>
   );
 }
 
-function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails }: AppShellProps): ReactElement {
+function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectAccount, reconnectError, onAddAccount, onMoveAccounts, onRemoveAccount, onSetAccountNotifications, onSendNewMessage, onLoadOlderEmails, onRefreshEmails, onSearchEmails }: AppShellProps): ReactElement {
   const theme = useTheme();
   const snapshot = useMailSnapshot();
   const { feed } = useFeed();
@@ -48,10 +50,36 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
   const [mobilePane, setMobilePane] = useState<MobilePane>('list');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newMessageOpen, setNewMessageOpen] = useState(false);
+  const [searchingEmails, setSearchingEmails] = useState(false);
+  const [searchError, setSearchError] = useState<string>();
 
   const isMobile = width < theme.layout.mobileBreakpoint;
 
   useKeyboardShortcuts({ enabled: !isMobile });
+
+  useEffect(() => {
+    const query = snapshot.view.query.trim();
+    setSearchError(undefined);
+    if (onSearchEmails === undefined || query.length < 3) {
+      setSearchingEmails(false);
+      return;
+    }
+    let active = true;
+    const timeout = setTimeout(() => {
+      setSearchingEmails(true);
+      void onSearchEmails(query)
+        .catch((error) => {
+          if (active) setSearchError(error instanceof Error ? error.message : 'Não foi possível buscar no servidor.');
+        })
+        .finally(() => {
+          if (active) setSearchingEmails(false);
+        });
+    }, 500);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [onSearchEmails, snapshot.view.query]);
 
   const selectedThread = useMemo(
     () => feed.threads.find((thread) => thread.id === snapshot.view.selectedThreadId),
@@ -107,14 +135,17 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
                   appIcon={appIcon}
                   fullScreen
                   onLoadOlder={onLoadOlderEmails}
+                  onRefresh={onRefreshEmails}
+                  searchingEmails={searchingEmails}
+                  searchError={searchError}
                 />
               </View>
-              <MobileNav active={snapshot.view.channel} onCompose={openNewMessage} />
+              <MobileNav active={snapshot.view.channel} chatEnabled={snapshot.ui.chatEnabled} onCompose={openNewMessage} />
             </>
           )}
         </View>
         <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
-        <CommandPalette mobile />
+        <CommandPalette mobile searching={searchingEmails} error={searchError} onSelectThread={handleSelect} />
         <SettingsModal
           visible={settingsOpen}
           onClose={() => setSettingsOpen(false)}
@@ -146,7 +177,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
           backgroundColor: theme.colors.surface
         }}
       >
-        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openNewMessage} onLoadOlder={onLoadOlderEmails} />
+        <UnifiedThreadList feed={feed} onSelectThread={handleSelect} onCompose={openNewMessage} onLoadOlder={onLoadOlderEmails} searchingEmails={searchingEmails} searchError={searchError} />
       </View>
 
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -154,7 +185,7 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
       </View>
 
       <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
-      <CommandPalette />
+      <CommandPalette searching={searchingEmails} error={searchError} onSelectThread={handleSelect} />
       <SettingsModal
         visible={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -211,7 +242,7 @@ function ReconnectAccount({ onReconnectAccount, reconnectError }: Pick<AppShellP
 }
 
 /** Navegação inferior de 84 px do frame mobile. */
-function MobileNav({ active, onCompose }: { active: 'all' | 'email' | 'chat'; onCompose: () => void }): ReactElement {
+function MobileNav({ active, chatEnabled, onCompose }: { active: 'all' | 'email' | 'chat'; chatEnabled: boolean; onCompose: () => void }): ReactElement {
   const theme = useTheme();
   const actions = useMailActions();
 
@@ -234,12 +265,14 @@ function MobileNav({ active, onCompose }: { active: 'all' | 'email' | 'chat'; on
         active={active !== 'chat'}
         onPress={() => actions.setChannel('email')}
       />
-      <NavItem
-        name="chat"
-        label="Chat"
-        active={active === 'chat'}
-        onPress={() => actions.setChannel('chat')}
-      />
+      {chatEnabled && (
+        <NavItem
+          name="chat"
+          label="Chat"
+          active={active === 'chat'}
+          onPress={() => actions.setChannel('chat')}
+        />
+      )}
       <NavItem
         name="compose"
         label="Escrever"

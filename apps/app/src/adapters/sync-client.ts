@@ -243,6 +243,17 @@ export async function requestSync(provider: string, request: SyncRequest): Promi
   return (await response.json()) as SyncEnvelopeDto;
 }
 
+export async function searchEmails(accountIds: readonly AccountId[], query: string): Promise<MailMessage[]> {
+  const response = await apiFetch('/search/emails', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountIds, query })
+  });
+  if (!response.ok) throw new Error(await messageResponseError(response));
+  const result = await response.json() as { messages: RawMessageDto[] };
+  return result.messages.map((message) => toMailMessage(message, message.accountId));
+}
+
 export function toSyncPage(envelope: SyncEnvelopeDto, accountId: string): SyncPage {
   const messages = envelope.messages.map((dto) => toMailMessage(dto, accountId));
   const page: SyncPage = {
