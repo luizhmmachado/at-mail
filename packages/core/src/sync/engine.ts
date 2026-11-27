@@ -121,7 +121,8 @@ export class SyncEngine {
       .getSnapshot()
       .accounts.filter((account) => account.status !== 'reauth-required' && account.status !== 'paused' && (channel === undefined || account.channel === channel));
 
-    this.store.actions.setSyncState({ status: 'syncing', inFlightAccounts: accounts.map((a) => a.id) });
+    const inFlight = new Set([...this.runningAccounts.keys(), ...accounts.map((a) => a.id)]);
+    this.store.actions.setSyncState({ status: 'syncing', inFlightAccounts: Array.from(inFlight) });
 
     const syncVersions = new Map(accounts.map((account) => [account.id, this.accountSyncVersions.get(account.id) ?? 0]));
     const results: SyncOutcome[] = [];

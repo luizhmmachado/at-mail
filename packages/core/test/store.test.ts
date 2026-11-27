@@ -5,6 +5,7 @@ import {
   createAppStore,
   createPresetContexts,
   createSeedData,
+  hasVisibleSyncActivity,
   shouldIgnoreInEditableTarget,
   formatShortcut,
   normalizeEvent,
@@ -577,6 +578,62 @@ describe('pastas e seleção de e-mails', () => {
     store.actions.setEmailFolder('trash');
     assert.deepEqual(store.getSnapshot().ui.selectedThreadIds, []);
     assert.equal(store.getSnapshot().ui.selectingThreads, false);
+  });
+
+  it('sai do modo de seleção quando todos os e-mails são desmarcados manualmente', () => {
+    const store = storeWithSeed();
+    const emails = store.getFeed().threads.filter((item) => item.channel === 'email');
+    assert.ok(emails.length >= 2);
+    const first = emails[0]!;
+    const second = emails[1]!;
+
+    store.actions.toggleThreadSelection(first.id);
+    store.actions.toggleThreadSelection(second.id);
+    assert.equal(store.getSnapshot().ui.selectingThreads, true);
+    assert.equal(store.getSnapshot().ui.selectedThreadIds.length, 2);
+
+    store.actions.toggleThreadSelection(first.id);
+    assert.equal(store.getSnapshot().ui.selectingThreads, true);
+    assert.deepEqual(store.getSnapshot().ui.selectedThreadIds, [second.id]);
+
+    store.actions.toggleThreadSelection(second.id);
+    assert.equal(store.getSnapshot().ui.selectingThreads, false);
+    assert.deepEqual(store.getSnapshot().ui.selectedThreadIds, []);
+  });
+
+  it('exibe indicador de sincronização apenas quando já há e-mails visíveis e a conta do canal atual ainda sincroniza', () => {
+    const seed = createSeedData(NOW);
+    const emailAccounts = seed.accounts.filter((account) => account.channel === 'email');
+    const chatAccount = seed.accounts.find((account) => account.channel === 'chat')!;
+    assert.ok(emailAccounts.length >= 2);
+    const [firstEmail, secondEmail] = emailAccounts as [typeof emailAccounts[0], typeof emailAccounts[1]];
+    const store = createAppStore({
+      contexts: seed.contexts,
+      accounts: [
+        { ...firstEmail, status: 'connected' },
+        { ...secondEmail, status: 'syncing' },
+        { ...chatAccount, status: 'connected' }
+      ],
+      messages: seed.messages.filter((message) => message.accountId === firstEmail.id)
+    });
+
+    store.actions.setSyncState({
+      status: 'syncing',
+      inFlightAccounts: [secondEmail.id]
+    });
+    assert.equal(hasVisibleSyncActivity(store.getSnapshot(), store.getFeed().threads.length), true);
+    assert.equal(hasVisibleSyncActivity(store.getSnapshot(), 0), false);
+
+    store.actions.setSyncState({
+      status: 'syncing',
+      inFlightAccounts: [chatAccount.id]
+    });
+    store.actions.registerAccount({ ...secondEmail, status: 'connected' });
+    store.actions.registerAccount({ ...chatAccount, status: 'syncing' });
+    assert.equal(hasVisibleSyncActivity(store.getSnapshot(), store.getFeed().threads.length), false);
+
+    store.actions.setSyncState({ status: 'error', inFlightAccounts: [], lastError: 'falha na conta' });
+    assert.equal(hasVisibleSyncActivity(store.getSnapshot(), store.getFeed().threads.length), false);
   });
 });
 

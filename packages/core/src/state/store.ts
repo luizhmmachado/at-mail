@@ -316,7 +316,7 @@ export function createAppStore(options: AppStoreOptions = {}) {
       const selected = new Set(snapshot.ui.selectedThreadIds);
       if (selected.has(threadId)) selected.delete(threadId);
       else selected.add(threadId);
-      patch({ ui: { ...snapshot.ui, selectingThreads: true, selectedThreadIds: [...selected] } });
+      patch({ ui: { ...snapshot.ui, selectingThreads: selected.size > 0, selectedThreadIds: [...selected] } });
     },
 
     selectAllThreads(): void {
@@ -532,6 +532,24 @@ export function createAppStore(options: AppStoreOptions = {}) {
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
+
+/**
+ * Indica se há sincronização em andamento para a visão atual quando já existem
+ * conversas carregadas na lista.
+ */
+export function hasVisibleSyncActivity(snapshot: AppSnapshot, threadCount: number): boolean {
+  if (threadCount === 0 || snapshot.sync.status !== 'syncing') return false;
+  const inFlight = new Set(snapshot.sync.inFlightAccounts);
+  const syncingAccounts = snapshot.accounts.filter(
+    (account) => account.status === 'syncing' || inFlight.has(account.id)
+  );
+  if (syncingAccounts.length === 0) return true;
+  return syncingAccounts.some(
+    (account) =>
+      (snapshot.view.channel === 'all' || account.channel === snapshot.view.channel) &&
+      (snapshot.view.contextId === 'all' || account.contextId === snapshot.view.contextId)
+  );
+}
 
 function sortMessages(messages: readonly MailMessage[]): MailMessage[] {
   return messages.slice().sort((a, b) => a.receivedAt - b.receivedAt);

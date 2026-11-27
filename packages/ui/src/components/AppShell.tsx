@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, BackHandler, Modal, Platform, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
+import { BackHandler, Modal, Platform, Pressable, Text, useWindowDimensions, View, type ImageSourcePropType } from 'react-native';
 import type { Account, AccountId, ChatMessage, ContextId, ThreadId, UnifiedThread } from '@mail/core';
 import { MailThemeProvider, useTheme } from '../theme/MailThemeProvider';
 import { useFeed, useMailActions, useMailSnapshot, useThreadSelectionHandler } from '../store/MailStoreProvider';
@@ -113,7 +113,6 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
             </>
           )}
         </View>
-        <SyncStatus mobile />
         <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
         <CommandPalette mobile />
         <SettingsModal
@@ -154,7 +153,6 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
         <ReaderPane thread={selectedThread} onSend={onSend} onReactChat={onReactChat} onLoadChatImage={onLoadChatImage} />
       </View>
 
-      <SyncStatus />
       <ReconnectAccount onReconnectAccount={onReconnectAccount} reconnectError={reconnectError} />
       <CommandPalette />
       <SettingsModal
@@ -172,44 +170,6 @@ function ShellBody({ appIcon, onSend, onReactChat, onLoadChatImage, onReconnectA
         onAddAccount={onAddAccount}
         onSend={onSendNewMessage}
       />
-    </View>
-  );
-}
-
-/** Feedback persistente e discreto durante a primeira carga/sync incremental. */
-function SyncStatus({ mobile = false }: { mobile?: boolean }): ReactElement | null {
-  const theme = useTheme();
-  const { sync, accounts } = useMailSnapshot();
-  const error = accounts.find((account) => account.status !== 'reauth-required' && account.lastError)?.lastError
-    ?? (sync.lastError === 'A autorização da conta Google expirou. Faça login novamente.' ? undefined : sync.lastError);
-  if (sync.status !== 'syncing' && !error) return null;
-
-  return (
-    <View
-      pointerEvents="none"
-      role="status"
-      accessibilityLiveRegion="polite"
-      accessibilityLabel={error ? `Falha na sincronização: ${error}` : 'Atualizando mensagens'}
-      style={{
-        position: 'absolute',
-        ...(mobile ? { bottom: theme.layout.mobileBottomNavHeight + theme.space[3] } : { top: theme.space[3] }),
-        right: theme.space[4],
-        zIndex: 20,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space[2],
-        paddingHorizontal: theme.space[3],
-        height: 30,
-        borderWidth: theme.border.hairline,
-        borderColor: theme.colors.borderSubtle,
-        borderRadius: theme.radius.pill,
-        backgroundColor: theme.colors.surface
-      }}
-    >
-      {!error && <ActivityIndicator size="small" color={theme.colors.accent} />}
-      <Text numberOfLines={1} style={{ maxWidth: 280, ...typeStyle(theme, 'sectionMeta', 'medium'), color: theme.colors.textSecondary }}>
-        {error ? `Falha na sincronização: ${error}` : 'Atualizando…'}
-      </Text>
     </View>
   );
 }

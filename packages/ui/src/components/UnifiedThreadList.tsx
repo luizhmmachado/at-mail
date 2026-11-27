@@ -1,9 +1,10 @@
-import { useMemo, useState, type ReactElement } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, SectionList, Text, TextInput, View, type ImageSourcePropType } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { ActivityIndicator, Animated, Easing, Image, Modal, Platform, Pressable, SectionList, Text, TextInput, View, type ImageSourcePropType } from 'react-native';
 import {
   contextAccent,
   formatShortcut,
   groupByDate,
+  hasVisibleSyncActivity,
   type FeedResult,
   type ThreadId,
   type UnifiedThread
@@ -60,6 +61,7 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
       : (snapshot.contexts.find((context) => context.id === snapshot.view.contextId)?.name ?? 'Todas as caixas');
   const selectionMode = snapshot.ui.selectingThreads;
   const selectedCount = snapshot.ui.selectedThreadIds.length;
+  const syncingMore = hasVisibleSyncActivity(snapshot, feed.threads.length);
 
   const platform = currentPlatform();
 
@@ -179,6 +181,8 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
         <FolderTabs />
       </View>
 
+      {syncingMore && <SyncProgressBar />}
+
       <SectionList<UnifiedThread, { title: string; data: UnifiedThread[] }>
         sections={sections}
         keyExtractor={(thread) => thread.id}
@@ -203,13 +207,21 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
               <Text
                 style={{
                   ...typeStyle(theme, 'sectionLabel'),
-                  color: theme.colors.textSecondary,
-                  textTransform: 'uppercase'
+                  color: mobile && !selectionMode && syncingMore && section === sections[0]
+                    ? theme.colors.accent
+                    : theme.colors.textSecondary,
+                  ...(mobile && !selectionMode && syncingMore && section === sections[0]
+                    ? {}
+                    : { textTransform: 'uppercase' as const })
                 }}
               >
                 {selectionMode
                   ? mobile ? 'Toque nos e-mails para selecionar' : `${selectedCount} selecionados`
-                  : mobile && section === sections[0] ? 'Segure um e-mail para abrir as ações' : section.title}
+                  : mobile && section === sections[0]
+                    ? syncingMore
+                      ? (snapshot.view.channel === 'email' ? 'Sincronizando e-mails…' : 'Sincronizando…')
+                      : 'Segure um e-mail para abrir as ações'
+                    : section.title}
               </Text>
               {unread > 0 && !selectionMode && (
                 <Text style={{ ...typeStyle(theme, 'sectionMeta'), color: theme.colors.textSecondary }}>
@@ -345,6 +357,59 @@ export function UnifiedThreadList({ appIcon, feed, onSelectThread, onCompose, on
             ))}
           </View>
         </>
+      )}
+    </View>
+  );
+}
+
+function SyncProgressBar(): ReactElement {
+  const theme = useTheme();
+  const [trackWidth, setTrackWidth] = useState(0);
+  const progress = useRef(new Animated.Value(0)).current;
+  const barWidth = Math.max(48, Math.round(trackWidth * 0.3));
+
+  useEffect(() => {
+    if (trackWidth <= 0) return;
+    progress.setValue(0);
+    const animation = Animated.loop(
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 1800,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: Platform.OS !== 'web'
+      })
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [progress, trackWidth]);
+
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-barWidth, trackWidth]
+  });
+
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityLabel="Sincronizando mensagens"
+      onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+      style={{
+        width: '100%',
+        height: 3,
+        overflow: 'hidden',
+        backgroundColor: theme.colors.syncTrack
+      }}
+    >
+      {trackWidth > 0 && (
+        <Animated.View
+          style={{
+            width: barWidth,
+            height: 3,
+            borderRadius: theme.radius.pill,
+            backgroundColor: theme.colors.accent,
+            transform: [{ translateX }]
+          }}
+        />
       )}
     </View>
   );

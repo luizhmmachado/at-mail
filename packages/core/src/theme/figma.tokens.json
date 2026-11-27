@@ -28,6 +28,7 @@
     "textInverted": { "light": "#FFFFFF", "dark": "#111113" },
     "accent": { "light": "#1D4ED8", "dark": "#7A9BFF" },
     "accentMuted": { "light": "#EEF2FA", "dark": "#1B2540" },
+    "syncTrack": { "light": "#DBEAFE", "dark": "#1B2540" },
     "accentText": { "light": "#FFFFFF", "dark": "#111113" },
     "focusRing": { "light": "#1D4ED8", "dark": "#7A9BFF" },
     "selectedBar": { "light": "#1D4ED8", "dark": "#7A9BFF" },
