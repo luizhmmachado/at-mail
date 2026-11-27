@@ -106,10 +106,10 @@ Para builds locais, defina ambos antes de `npm run web` / `expo prebuild`.
 
 ## 6. Notificações push mobile
 
-O APK registra um token Expo autenticado em `/accounts/push-token`. O cron da Vercel
-chama `/api/push/cron` a cada cinco minutos; o workflow agendado no GitHub permanece
-como fallback. O worker consulta Gmail e Google Chat, deduplica mensagens por usuário/conta
-e envia o push pelo Expo Push Service.
+O APK registra um token Expo autenticado em `/accounts/push-token`. O workflow agendado
+no GitHub chama `/api/push/cron` a cada cinco minutos. O worker consulta Gmail e
+Google Chat, deduplica mensagens por usuário/conta e envia o push pelo Expo Push
+Service. A frequência efetiva dos agendamentos públicos do GitHub pode variar.
 
 Para produzir um APK apto a receber push com o app fechado:
 
