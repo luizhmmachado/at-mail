@@ -1,7 +1,7 @@
 import type { MailMessage } from '@mail/core';
 import type { SyncConfig } from './config.js';
 import type { Db } from './db.js';
-import { fetchChat, fetchGmail } from './providers.js';
+import { fetchChat, fetchGmailForPush } from './providers.js';
 
 interface PushAccount {
   id: string;
@@ -27,17 +27,26 @@ export async function runMobilePushPoll(db: Db, config: SyncConfig): Promise<{ a
   `)).rows;
   let notifications = 0;
   let failures = 0;
+  const accountsByUser = new Map<string, PushAccount[]>();
+  for (const account of accounts) {
+    const group = accountsByUser.get(account.user_id) ?? [];
+    group.push(account);
+    accountsByUser.set(account.user_id, group);
+  }
+  const groups = [...accountsByUser.values()];
   let next = 0;
-  const workers = Array.from({ length: Math.min(4, accounts.length) }, async () => {
-    while (next < accounts.length) {
-      const account = accounts[next];
+  const workers = Array.from({ length: Math.min(4, groups.length) }, async () => {
+    while (next < groups.length) {
+      const group = groups[next];
       next += 1;
-      if (account === undefined) continue;
-      try {
-        notifications += await pollAccount(db, config, account);
-      } catch (error) {
-        failures += 1;
-        console.error('Falha ao processar notificações push.', error);
+      if (group === undefined) continue;
+      for (const account of group) {
+        try {
+          notifications += await pollAccount(db, config, account);
+        } catch (error) {
+          failures += 1;
+          console.error('Falha ao processar notificações push.', error);
+        }
       }
     }
   });
@@ -53,23 +62,15 @@ async function pollAccount(db: Db, config: SyncConfig, account: PushAccount): Pr
   let messages: MailMessage[];
   let cursor = state.cursor ?? '';
   if (account.provider === 'gmail') {
-    messages = [];
-    let gmailCursor = state.initialized ? cursor : undefined;
-    let gmailReset = !state.initialized;
-    do {
-      const page = await fetchGmail(db, config, account.user_id, account.id, account.context_id, gmailCursor);
-      messages.push(...page.messages);
-      gmailCursor = page.cursor;
-      cursor = page.cursor;
-      gmailReset ||= page.historyReset;
-      if (!page.hasMore) break;
-    } while (true);
-    if (!state.initialized || gmailReset) {
+    const page = await fetchGmailForPush(db, config, account.user_id, account.id, account.context_id, state.initialized ? cursor : undefined);
+    messages = page.messages;
+    cursor = page.cursor;
+    if (!state.initialized || page.historyReset) {
       await db.query(
         'INSERT INTO atmail_push_sync_state (account_id, user_id, provider, channel, cursor, initialized, updated_at) VALUES ($1, $2, $3, $4, $5, TRUE, $6) ON CONFLICT(account_id) DO UPDATE SET cursor = excluded.cursor, initialized = TRUE, updated_at = excluded.updated_at',
         [account.id, account.user_id, account.provider, account.channel, cursor, Date.now()]
       );
-      await rememberMessages(db, account, messages.filter((message) => !message.isRead));
+      await rememberMessages(db, account, messages);
       return 0;
     }
   } else {

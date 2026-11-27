@@ -9,7 +9,7 @@ import { encrypt, hashToken, pkceChallenge } from '../src/crypto';
 import { databasePoolConfig, serverlessDatabaseUrl } from '../src/db';
 import { SUPABASE_CA } from '../src/supabase-ca';
 import type { Db } from '../src/db';
-import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, fetchGmail, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, gmailSearchUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
+import { chatDirectMessageUrl, chatMessagesUrl, chatReactionRequest, chatReplyRequest, chatSendReceipt, chatSpaceReadStateRequest, chatSpaceReadStateUrl, createDirectMessageSetupRequest, createGmailRawMessage, extractGmailBodies, fetchGmail, fetchGmailForPush, gmailAddedMessageIds, gmailHistoryUrl, gmailMessagesUrl, gmailSearchUrl, isChatMessageRead, resolveChatSpaceName } from '../src/providers';
 import { createAppServer, type AppServer } from '../src/server';
 
 interface PendingRow {
@@ -367,6 +367,37 @@ describe('conexão PostgreSQL serverless', () => {
 });
 
 describe('sincronização do Gmail', () => {
+  it('inicializa push sem baixar mensagens existentes e limita deltas subsequentes', async (t) => {
+    const { db, accounts, credentials } = createFakeDb();
+    accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });
+    credentials.add('gmail-1');
+    let detailRequests = 0;
+    t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'oauth2.googleapis.com') return Response.json({ access_token: 'test-token' });
+      if (url.pathname.endsWith('/profile')) return Response.json({ historyId: '900' });
+      if (url.pathname.endsWith('/history')) {
+        return Response.json({
+          historyId: '925',
+          history: [{ messagesAdded: Array.from({ length: 30 }, (_, index) => ({ message: { id: `message-${index}` } })) }]
+        });
+      }
+      detailRequests += 1;
+      const id = url.pathname.split('/').pop();
+      return Response.json({ id, threadId: id, labelIds: ['INBOX', 'UNREAD'], payload: { headers: [] } });
+    });
+
+    const initial = await fetchGmailForPush(db, config, 'user-1', 'gmail-1', 'work');
+    assert.equal(initial.cursor, '900');
+    assert.equal(initial.messages.length, 0);
+    assert.equal(detailRequests, 0);
+
+    const delta = await fetchGmailForPush(db, config, 'user-1', 'gmail-1', 'work', '800');
+    assert.equal(delta.cursor, '925');
+    assert.equal(delta.messages.length, 25);
+    assert.equal(detailRequests, 25);
+  });
+
   it('limita a busca remota ao Gmail e aos oito resultados mais relevantes', async (t) => {
     const { db, accounts, credentials } = createFakeDb();
     accounts.set('gmail-1', { userId: 'user-1', contextId: 'work', provider: 'gmail', channel: 'email' });

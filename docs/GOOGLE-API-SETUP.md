@@ -109,7 +109,9 @@ Para builds locais, defina ambos antes de `npm run web` / `expo prebuild`.
 O APK registra um token Expo autenticado em `/accounts/push-token`. O workflow agendado
 no GitHub chama `/api/push/cron` a cada cinco minutos. O worker consulta Gmail e
 Google Chat, deduplica mensagens por usuário/conta e envia o push pelo Expo Push
-Service. A frequência efetiva dos agendamentos públicos do GitHub pode variar.
+Service. O worker inicializa apenas o cursor, limita deltas a 25 mensagens por
+execução e processa as contas de cada usuário em série para preservar a quota do
+Gmail. A frequência efetiva dos agendamentos públicos do GitHub pode variar.
 
 Para produzir um APK apto a receber push com o app fechado:
 

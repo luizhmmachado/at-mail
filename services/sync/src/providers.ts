@@ -628,6 +628,8 @@ function decodeCodePoint(value: number): string {
 const GMAIL_PAGE_CURSOR_PREFIX = 'gmail-period:';
 const GMAIL_PERIOD_DAYS = 7;
 const GMAIL_SEARCH_LIMIT = 8;
+const GMAIL_PUSH_MESSAGE_LIMIT = 25;
+const GMAIL_PUSH_HISTORY_PAGE_LIMIT = 3;
 
 export function gmailMessagesUrl(pageToken?: string): string {
   const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
@@ -716,6 +718,55 @@ export async function searchGmail(
     contextId,
     false
   ));
+}
+
+export async function fetchGmailForPush(
+  db: Db,
+  config: SyncConfig,
+  userId: string,
+  accountId: string,
+  contextId: string,
+  cursor?: string
+): Promise<{ messages: MailMessage[]; cursor: string; historyReset: boolean }> {
+  const token = await accessToken(db, config, userId, accountId);
+  if (!cursor) {
+    const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
+    return { messages: [], cursor: typeof profile.historyId === 'string' ? profile.historyId : '', historyReset: true };
+  }
+
+  const ids = new Set<string>();
+  let nextCursor = cursor;
+  let pageToken: string | undefined;
+  let pages = 0;
+  try {
+    do {
+      const history = await googleJson(gmailHistoryUrl(cursor, pageToken), token);
+      nextCursor = newerHistoryId(nextCursor, history.historyId);
+      for (const id of gmailAddedMessageIds(history)) {
+        if (ids.size >= GMAIL_PUSH_MESSAGE_LIMIT) break;
+        ids.add(id);
+      }
+      pageToken = ids.size >= GMAIL_PUSH_MESSAGE_LIMIT ? undefined : history.nextPageToken;
+      pages += 1;
+    } while (pageToken && pages < GMAIL_PUSH_HISTORY_PAGE_LIMIT);
+  } catch (error) {
+    if ((error as Error & { status?: number }).status !== 404) throw error;
+    const profile = await googleJson('https://gmail.googleapis.com/gmail/v1/users/me/profile', token);
+    return { messages: [], cursor: typeof profile.historyId === 'string' ? profile.historyId : '', historyReset: true };
+  }
+
+  const messages = await mapWithConcurrency(
+    [...ids],
+    1,
+    async (id) => mapGmailMessage(
+      await googleJson(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, token),
+      token,
+      accountId,
+      contextId,
+      false
+    )
+  );
+  return { messages, cursor: nextCursor, historyReset: false };
 }
 
 function parseGmailPageCursor(cursor: string): { historyId: string; pageToken: string } | undefined {
